@@ -230,7 +230,7 @@ def main():
     RUN_DIR.mkdir(parents=True, exist_ok=True)
     global ACTIVE
     ACTIVE = set(args.models)
-    backends = {m: make_backend(m) for m in args.models}
+    backends = {m: make_backend(m) for m in MODELS}  # all replayed; only ACTIVE are advanced
     if args.cmd == "plan":
         return plan(backends)
     if args.cmd == "report":
