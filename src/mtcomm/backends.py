@@ -14,6 +14,7 @@ import base64
 import io
 import json
 import os
+import time
 from functools import lru_cache
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -73,8 +74,9 @@ class GeminiBackend(Backend):
     THINKING_MODELS = {"gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-3-flash-preview",
                        "gemini-3.1-pro-preview"}
 
-    def __init__(self, model: str, thinking_level: Optional[str] = "low", media_resolution="MEDIA_RESOLUTION_HIGH"):
-        self.model = model
+    def __init__(self, model: str, thinking_level: Optional[str] = "low", media_resolution="MEDIA_RESOLUTION_HIGH",
+                 json_mode: bool = True):
+        self.model, self.json_mode = model, json_mode
         self.thinking_level = thinking_level if model in self.THINKING_MODELS else None
         self.media_resolution = media_resolution
         self._client = None
@@ -89,7 +91,8 @@ class GeminiBackend(Backend):
 
     def config(self):
         return {"provider": self.provider, "model": self.model, "thinking_level": self.thinking_level,
-                "media_resolution": self.media_resolution, "response_mime_type": "application/json",
+                "media_resolution": self.media_resolution,
+                "response_mime_type": "application/json" if self.json_mode else "text/plain",
                 "image_max_side": MAX_SIDE}
 
     def build(self, prompt, system_prompt, images):
@@ -98,7 +101,9 @@ class GeminiBackend(Backend):
             parts.append({"text": f"Photo {i}:"})
             parts.append({"inline_data": {"mime_type": "image/jpeg", "data": image_b64(p)}})
         parts.append({"text": prompt})
-        gen = {"response_mime_type": "application/json", "media_resolution": self.media_resolution}
+        gen = {"media_resolution": self.media_resolution}
+        if self.json_mode:
+            gen["response_mime_type"] = "application/json"
         if self.thinking_level:
             gen["thinking_config"] = {"thinking_level": self.thinking_level}
         req = {"contents": [{"role": "user", "parts": parts}], "generation_config": gen}
@@ -115,6 +120,30 @@ class GeminiBackend(Backend):
         if not text.strip():
             raise ValueError(f"empty response (finish reason: {cands[0].get('finishReason') or cands[0].get('finish_reason')})")
         return text
+
+    def call(self, req: dict) -> dict:
+        """One synchronous request; returns {"text", "usage"} or {"error"}. Retries throttling and 5xx."""
+        import requests
+
+        load_env()
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent"
+        for attempt in range(6):
+            try:
+                r = requests.post(url, params={"key": os.environ["GEMINI_API_KEY"]}, json=req, timeout=180)
+            except requests.RequestException as e:
+                err = str(e)
+            else:
+                if r.status_code == 200:
+                    j = r.json()
+                    try:
+                        return {"text": self.parse(j), "usage": j.get("usageMetadata")}
+                    except Exception as e:  # blocked or empty: an outcome, not a retry
+                        return {"error": str(e)[:500], "usage": j.get("usageMetadata")}
+                err = f"HTTP {r.status_code}: {r.text[:300]}"
+                if r.status_code not in (429, 500, 502, 503, 504):
+                    return {"error": err}
+            time.sleep(min(60, 2 ** attempt * 2))
+        return {"error": err}
 
     def submit(self, requests, workdir):
         path = workdir / f"{self.model}.jsonl"
@@ -159,8 +188,8 @@ class GeminiBackend(Backend):
 class OpenAIBackend(Backend):
     provider = "openai"
 
-    def __init__(self, model: str, reasoning_effort: str = "low", detail: str = "auto"):
-        self.model, self.reasoning_effort, self.detail = model, reasoning_effort, detail
+    def __init__(self, model: str, reasoning_effort: str = "low", detail: str = "auto", json_mode: bool = True):
+        self.model, self.reasoning_effort, self.detail, self.json_mode = model, reasoning_effort, detail, json_mode
         self._client = None
 
     def client(self):
@@ -174,7 +203,7 @@ class OpenAIBackend(Backend):
     def config(self):
         return {"provider": self.provider, "model": self.model, "endpoint": "/v1/responses",
                 "reasoning_effort": self.reasoning_effort, "image_detail": self.detail,
-                "text_format": "json_object", "image_max_side": MAX_SIDE}
+                "text_format": "json_object" if self.json_mode else "text", "image_max_side": MAX_SIDE}
 
     def build(self, prompt, system_prompt, images):
         content = []
@@ -184,7 +213,9 @@ class OpenAIBackend(Backend):
                             "detail": self.detail})
         content.append({"type": "input_text", "text": prompt})
         body = {"model": self.model, "input": [{"role": "user", "content": content}],
-                "reasoning": {"effort": self.reasoning_effort}, "text": {"format": {"type": "json_object"}}}
+                "reasoning": {"effort": self.reasoning_effort}}
+        if self.json_mode:
+            body["text"] = {"format": {"type": "json_object"}}
         if system_prompt:
             body["instructions"] = system_prompt
         return body
@@ -199,6 +230,24 @@ class OpenAIBackend(Backend):
             raise ValueError(f"empty response (status: {response.get('status')}, "
                              f"incomplete: {response.get('incomplete_details')})")
         return text
+
+    def call(self, body: dict) -> dict:
+        """One synchronous request; returns {"text", "usage"} or {"error"}. Retries rate limits and 5xx."""
+        import openai
+
+        for attempt in range(6):
+            try:
+                resp = self.client().responses.create(**body).model_dump()
+                try:
+                    return {"text": self.parse(resp), "usage": resp.get("usage")}
+                except Exception as e:
+                    return {"error": str(e)[:500], "usage": resp.get("usage")}
+            except (openai.RateLimitError, openai.APIConnectionError, openai.InternalServerError) as e:
+                err = str(e)[:300]
+            except openai.APIError as e:
+                return {"error": str(e)[:500]}
+            time.sleep(min(60, 2 ** attempt * 2))
+        return {"error": err}
 
     def submit(self, requests, workdir):
         path = workdir / f"{self.model}.jsonl"
@@ -242,9 +291,9 @@ class OpenAIBackend(Backend):
         return out
 
 
-def make_backend(model: str) -> Backend:
+def make_backend(model: str, **kw) -> Backend:
     if model.startswith("gemini"):
-        return GeminiBackend(model)
+        return GeminiBackend(model, **kw)
     if model.startswith("gpt"):
-        return OpenAIBackend(model)
+        return OpenAIBackend(model, **kw)
     raise ValueError(f"no backend for {model}")
