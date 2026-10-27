@@ -80,7 +80,9 @@ class TwentyQuestionsGame(_QAGame):
                 f"Never mention the entity in your response. If the query contains two or more questions asked "
                 f'simultaneously, consider it invalid and respond with "Maybe."\n\n<|Entity|>\n{self.item["target_a"]}\n\n'
                 f"<|Language|>\n{name}\n\n<|Question|>\n{q}",
-                can_message=True, can_answer=False)
+                # MuG-Eval's 20Q answerer keeps its conversation (twenty_gen_answer.py appends to messages_a);
+                # its MCQ answerer is reset for every question, so MCQConversationGame passes no inbox.
+                inbox=list(self.inbox[role]), can_message=True, can_answer=False)
         name = lang(self.roles[role]).name
         entity_list = "\n".join(self.item["candidates_q"])
         intro = (f"You will be solving an entity deduction game by asking questions about a hidden item in {name}. "

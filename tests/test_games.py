@@ -14,7 +14,7 @@ from mtcomm.channels import Channel, ChannelOutput, IdentityChannel, NoChannel, 
 from mtcomm.game import Move, Observation, run_episode  # noqa: E402
 from mtcomm.games.blend_lv import BlendLocalVisitorGame  # noqa: E402
 from mtcomm.games.image_ref import ImageRefGame  # noqa: E402
-from mtcomm.games.mugeval import TwentyQuestionsGame  # noqa: E402
+from mtcomm.games.mugeval import MCQConversationGame, TwentyQuestionsGame  # noqa: E402
 from mtcomm.players import LLMPlayer, Player, ScriptedPlayer, parse_action  # noqa: E402
 
 
@@ -246,7 +246,47 @@ def test_players_see_their_own_earlier_messages():
     third_q = [d for r, d in seen if r == "questioner"][2]
     assert third_q == [{"speaker": "you", "text": "Q1?"}, {"speaker": "partner", "text": "Enya"},
                        {"speaker": "you", "text": "Q2?"}, {"speaker": "partner", "text": "Henteu"}]
-    assert all(d == [] for r, d in seen if r == "answerer")  # MuG-Eval answerer stays stateless
+    second_a = [d for r, d in seen if r == "answerer"][1]  # MuG-Eval's 20Q answerer keeps its history
+    assert second_a == [{"speaker": "partner", "text": "Q1?"}, {"speaker": "you", "text": "Enya"},
+                        {"speaker": "partner", "text": "Q2?"}]
     prompt = LLMPlayer(lambda *a: "", "x").prompt(Observation(
         "questioner", "su", "intro", dialogue=third_q, inbox=["Enya", "Henteu"], can_answer=True))
     assert "You: Q1?" in prompt and "Partner: Henteu" in prompt
+
+
+@pytest.mark.parametrize("game", ["image", "culture", "mcq", "twentyq"])
+def test_every_dialogue_game_shows_history(game):
+    """At every turn a player sees every message sent so far (its own included); only MuG-Eval's MCQ
+    answerer is reset per question, as in MuG-Eval's mcqa_gen_answer.py."""
+    seen = []
+
+    class Talker(Player):
+        def __init__(self, role):
+            self.role, self.k = role, 0
+
+        def act(self, obs):
+            sent = [t.source for t in gm.turns if t.kind == "message"]
+            seen.append((obs.role, [d["text"] for d in obs.dialogue], sent))
+            self.k += 1
+            if obs.can_message and self.k <= 3:
+                return Move("message", f"{self.role}{self.k}")
+            return Move("answer", "A" if game == "culture" else "1")
+
+    if game == "image":
+        item = {"item_id": "x", "target": "t.jpg", "candidates": ["a.jpg", "t.jpg"], "gold": 2}
+        gm, roles = ImageRefGame(item, "su", "jv", max_questions=3), ["describer", "guesser"]
+    elif game == "culture":
+        item = {"item_id": "x", "question": "q", "options": {"A": "a", "B": "b"}, "answer_idx": "A",
+                "own_culture_idx": "B", "local_place": "Bandung", "visitor_own_culture": "Indonesia",
+                "local_knowledge": [{"question": "q", "answers": [{"answers": ["a"], "count": 3}]}]}
+        gm, roles = BlendLocalVisitorGame(item, "su", "jv", max_questions=3, min_questions=1), ["visitor", "local"]
+    elif game == "mcq":
+        item = {"passage_a": "p", "question_q": "q", "options_q": ["a", "b", "c", "d"], "gold": 1}
+        gm, roles = MCQConversationGame(item, "su", "jv"), ["questioner", "answerer"]
+    else:
+        item = {"target_q": "kursi", "target_a": "kursi", "candidates_q": ["kursi", "meja"]}
+        gm, roles = TwentyQuestionsGame(item, "su", "jv"), ["questioner", "answerer"]
+    run_episode(gm, {r: Talker(r) for r in roles}, IdentityChannel())
+    assert sum(1 for _, _, sent in seen if len(sent) >= 2) >= 2  # the game really went several turns
+    for role, dialogue, sent in seen:
+        assert dialogue == ([] if (game == "mcq" and role == "answerer") else sent), (role, dialogue, sent)
