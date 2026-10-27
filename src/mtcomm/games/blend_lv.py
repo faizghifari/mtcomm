@@ -19,10 +19,25 @@ from ..game import GameMaster, Observation
 from ..languages import get as lang
 
 
+# Where the visitor is from, disclosed as part of the setting (BLEnD has no Javanese culture;
+# Central Java is the visitor's home, Indonesia the proxy for the own-culture option).
+VISITOR_HOME = {"ko": "South Korea", "id": "Jakarta, Indonesia", "su": "West Java, Indonesia",
+                "jv": "Central Java, Indonesia", "en": "the United States"}
+
+
 class BlendLocalVisitorGame(GameMaster):
+    """prompt_style "neutral" (default) discloses the setting only: where each player is from and
+    that they are talking. "explicit" is the first pilot's wording, which told the visitor to
+    answer the way local people would and called the local's knowledge a survey; pilot
+    transcripts showed both phrasings leaking into the dialogue ("according to the locals",
+    "according to the survey here")."""
+
     def __init__(self, item: dict, local_lang: str, visitor_lang: str, max_questions: int = 3,
-                 min_questions: int = 0):
+                 min_questions: int = 0, prompt_style: str = "neutral"):
         super().__init__(item, {"visitor": visitor_lang, "local": local_lang})
+        if prompt_style not in ("neutral", "explicit"):
+            raise ValueError(f"unknown prompt_style {prompt_style!r}")
+        self.prompt_style = prompt_style
         self.max_questions = max_questions  # 0 = no-communication prior
         # Visitors that may answer at once often do (pilot: Flash-Lite models never asked), so the
         # protocol can require at least `min_questions` messages before an answer is allowed.
@@ -38,6 +53,8 @@ class BlendLocalVisitorGame(GameMaster):
         return "visitor"
 
     def observe(self, role):
+        if self.prompt_style == "neutral":
+            return self._observe_neutral(role)
         if role == "local":
             blocks = []
             for k in self.item["local_knowledge"]:
@@ -67,6 +84,40 @@ class BlendLocalVisitorGame(GameMaster):
             role, self.roles[role],
             f"You are a visitor in {self.item['local_place']}. You must answer this question the way LOCAL people "
             f"there would, not the way people from your home would:\n{self.item['question']}\n{opts}\n{budget} "
+            f"Your final answer is only the option letter.",
+            inbox=list(self.inbox[role]), can_message=can_ask, can_answer=not must_ask)
+
+    def _observe_neutral(self, role):
+        name = lang(self.roles[role]).name
+        if role == "local":
+            blocks = []
+            for k in self.item["local_knowledge"]:
+                ranked = [", ".join(a["answers"]) for a in k["answers"]]
+                blocks.append(f"{k['question']}\n  {ranked[0]} (most common)" +
+                              "".join(f"; {r}" for r in ranked[1:]))
+            return Observation(
+                role, self.roles[role],
+                f"You live in {self.item['local_place']} and speak {name}. A visitor is talking with you. "
+                f"From your own experience, this is what people around here commonly say about these topics, "
+                f"most common first:\n\n" + "\n\n".join(blocks) +
+                f"\n\nReply to the visitor's message naturally, as yourself. Write only in {name}.",
+                inbox=list(self.inbox[role]), can_message=True, can_answer=False)
+        asked = self._asked()
+        can_ask = asked < self.max_questions
+        must_ask = asked < self.min_questions
+        opts = "\n".join(f"{k}. {v}" for k, v in sorted(self.item["options"].items()))
+        if must_ask:
+            budget = (f"Send the person at least {self.min_questions - asked} more message(s) in {name} before "
+                      f"answering (at most {self.max_questions - asked}).")
+        elif can_ask:
+            budget = f"You may send the person up to {self.max_questions - asked} more message(s) in {name} before answering."
+        else:
+            budget = "You cannot send more messages; answer now."
+        home = VISITOR_HOME.get(self.roles["visitor"], "abroad")
+        return Observation(
+            role, self.roles[role],
+            f"You are from {home} and speak {name}. You are visiting {self.item['local_place']} and talking with "
+            f"a person who lives there. Answer this question:\n{self.item['question']}\n{opts}\n{budget} "
             f"Your final answer is only the option letter.",
             inbox=list(self.inbox[role]), can_message=can_ask, can_answer=not must_ask)
 
