@@ -1,9 +1,16 @@
-"""Build local-visitor MCQ items from BLEnD for the PoC pairs.
+"""Build local-visitor MCQ items from BLEnD annotations for the PoC pairs.
 
-For each (local culture, visitor) pair, keep BLEnD MCQ variants whose correct answer
-is the local culture's and whose options include the visitor's own-culture answer
-(so the own-culture default rate is defined). Reports per-pair survival counts and
-the number of unique option strings each visitor language must render.
+Options are built so the visitor cannot answer from world knowledge (pilot finding: with
+BLEnD's own MCQs, whose distractors come from other countries, visitors answered 65-100%
+correctly without asking anything). Each item has four options:
+  - the local culture's top answer (gold), kept only if it has at least twice the votes of
+    the runner-up, so the gold is unambiguous;
+  - two lower-ranked answers from the SAME local culture (plausible for that place; only the
+    local's vote counts say which is most common);
+  - the visitor's own culture's top answer, for the own-culture fallback rate (it must differ
+    from all three local options).
+Option order is shuffled per item. Reports per-pair survival counts and the number of
+unique option strings each visitor language must render.
 
 Usage: python scripts/blend_build_pairs.py [--n-questions 40] [--seed 0]
 """
@@ -18,7 +25,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from mtcomm.paths import BLEND_DIR, OUTPUT_ROOT  # noqa: E402
 
-# (local culture, local lang, visitor lang, visitor's own culture for the default-rate option)
+# (local culture, local lang, visitor lang, visitor's own culture for the fallback option)
 PAIRS = [
     ("West_Java", "su", "jv", "Indonesia"),  # no Javanese culture in BLEnD: Indonesia is a proxy
     ("West_Java", "su", "ko", "South_Korea"),
@@ -29,9 +36,8 @@ PAIRS = [
     ("West_Java", "su", "id", "Indonesia"),  # optional nested-culture pair
 ]
 
-# BLEnD placeholders that occasionally appear as MCQ options; never a usable answer.
-SENTINELS = {"not-applicable", "not applicable", "idk", "no-answer", "i don't know"}
-
+# Pairs in a group share one question sample: reverse directions (asymmetry) and
+# same-local different-visitor pairs (jv vs id visiting West Java).
 GROUPS = [
     [("West_Java", "ko"), ("South_Korea", "su")],
     [("Indonesia", "ko"), ("South_Korea", "id")],
@@ -39,34 +45,63 @@ GROUPS = [
     [("US", "ko")],
 ]
 
-
-def load_mcq():
-    with open(BLEND_DIR / "mcq" / "mc_questions_file_v1.1.json") as f:
-        rows = json.load(f)
-    by_key = defaultdict(list)
-    for r in rows:
-        r["choices"] = json.loads(r["choices"])
-        r["choice_countries"] = json.loads(r["choice_countries"])
-        by_key[(r["ID"], r["country"])].append(r)
-    return by_key
+# BLEnD placeholders; never a usable answer.
+SENTINELS = {"not-applicable", "not applicable", "idk", "no-answer", "i don't know", ""}
+MIN_MARGIN = 2.0
+# Questions whose annotations are degenerate (e.g. single-letter answers); dropped after
+# sampling so the other samples stay unchanged.
+BLOCKLIST = {"Th-en-48"}  # gold must have at least this many times the runner-up's votes
 
 
-def candidates(by_key, qid, local, visitor_culture):
-    """MCQ variants for (qid, local) that contain an option from the visitor's own culture."""
-    out = []
-    for r in by_key.get((qid, local), []):
-        countries = r["choice_countries"]
-        if countries[r["answer_idx"]] != local:
+def load_annotations(culture):
+    with open(BLEND_DIR / "annotations" / f"{culture}_data.json") as f:
+        return {q["ID"]: q for q in json.load(f)}
+
+
+def ranked_answers(q):
+    """[(english answer, count)] sorted by votes, sentinels and duplicates dropped."""
+    out, seen = [], set()
+    for a in sorted(q["annotations"], key=lambda a: -a["count"]):
+        en = (a.get("en_answers") or a.get("answers") or [""])[0].strip()
+        if en.lower() in SENTINELS or en.lower() in seen:
             continue
-        if any(v.strip().lower() in SENTINELS for v in r["choices"].values()):
-            continue
-        if visitor_culture not in countries.values():
-            continue
-        own = [k for k, c in countries.items() if c == visitor_culture][0]
-        if r["choices"][own].strip().lower() == r["choices"][r["answer_idx"]].strip().lower():
-            continue
-        out.append(r)
+        seen.add(en.lower())
+        out.append((en, a["count"]))
     return out
+
+
+def content_words(s):
+    return {w for w in s.lower().replace("-", " ").split() if len(w) >= 4}
+
+
+def overlaps(a, b):
+    """Same answer in different words, e.g. 'valentino jebret' vs 'valentino simanjuntak'."""
+    return a.lower() == b.lower() or bool(content_words(a) & content_words(b))
+
+
+def build_options(local_q, visitor_q):
+    """Return {"gold", "local_distractors", "own"} or None if the question is unusable for this pair.
+    Distractors are the highest-ranked local answers that share no content word with the gold or
+    each other; the visitor's own-culture answer must share none with any of the three."""
+    local = ranked_answers(local_q)
+    if len(local) < 3 or local[0][1] < MIN_MARGIN * local[1][1]:
+        return None
+    visitor = ranked_answers(visitor_q) if visitor_q else []
+    if not visitor:
+        return None
+    gold = local[0][0]
+    distractors = []
+    for ans, _ in local[1:]:
+        if not overlaps(ans, gold) and not any(overlaps(ans, d) for d in distractors):
+            distractors.append(ans)
+        if len(distractors) == 2:
+            break
+    if len(distractors) < 2:
+        return None
+    own = visitor[0][0]
+    if any(overlaps(own, o) for o in [gold] + distractors):
+        return None
+    return {"gold": gold, "local_distractors": distractors, "own": own}
 
 
 def main():
@@ -75,16 +110,13 @@ def main():
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
 
-    by_key = load_mcq()
-    qids = sorted({q for q, _ in by_key})
-
+    ann = {c: load_annotations(c) for c in {p[0] for p in PAIRS} | {p[3] for p in PAIRS}}
     valid = {}
     for local, _, vlang, vcult in PAIRS:
-        valid[(local, vlang)] = {q for q in qids if candidates(by_key, q, local, vcult)}
-        print(f"{local:12s} -> visitor {vlang}: {len(valid[(local, vlang)])} questions with an own-culture option")
+        valid[(local, vlang)] = {q for q in ann[local]
+                                 if build_options(ann[local][q], ann[vcult].get(q)) is not None}
+        print(f"{local:12s} -> visitor {vlang}: {len(valid[(local, vlang)])} usable questions")
 
-    # Pairs in a group share one question sample: reverse directions (asymmetry) and
-    # same-local different-visitor pairs (jv vs id visiting West Java).
     rng = random.Random(args.seed)
     chosen = {}
     for group in GROUPS:
@@ -94,32 +126,36 @@ def main():
         for p in group:
             chosen[p] = sample
 
-    # Greedy variant choice per (question, pair): reuse option strings already in the visitor's set.
-    seen_strings = defaultdict(set)
+    strings = defaultdict(set)
     items = []
     for local, llang, vlang, vcult in PAIRS:
         for qid in chosen[(local, vlang)]:
-            cands = candidates(by_key, qid, local, vcult)
-            best = min(cands, key=lambda r: (len(set(r["choices"].values()) - seen_strings[vlang]), r["MCQID"]))
-            seen_strings[vlang] |= set(best["choices"].values())
-            own = [k for k, c in best["choice_countries"].items() if c == vcult][0]
+            if qid in BLOCKLIST:
+                continue
+            opts = build_options(ann[local][qid], ann[vcult][qid])
+            entries = [(opts["gold"], "local#1"), (opts["local_distractors"][0], "local#2"),
+                       (opts["local_distractors"][1], "local#3"), (opts["own"], f"visitor_own:{vcult}")]
+            random.Random(f"{args.seed}-{qid}-{local}-{vlang}").shuffle(entries)
+            letters = "ABCD"
+            choices = {letters[i]: e[0] for i, e in enumerate(entries)}
+            source = {letters[i]: e[1] for i, e in enumerate(entries)}
+            strings[vlang] |= set(choices.values())
             items.append({
-                "item_id": f"{best['MCQID']}__{vlang}",
+                "item_id": f"{qid}@{local}__{vlang}",
                 "qid": qid,
                 "local_culture": local,
                 "local_lang": llang,
                 "visitor_lang": vlang,
                 "visitor_own_culture": vcult,
                 "visitor_culture_is_proxy": vlang == "jv",
-                "mcq_id": best["MCQID"],
-                "choices_en": best["choices"],
-                "choice_countries": best["choice_countries"],
-                "answer_idx": best["answer_idx"],
-                "own_culture_idx": own,
+                "choices_en": choices,
+                "choice_source": source,
+                "answer_idx": next(k for k, v in source.items() if v == "local#1"),
+                "own_culture_idx": next(k for k, v in source.items() if v.startswith("visitor_own")),
             })
 
     print("unique option strings to render per visitor language:")
-    for vlang, s in sorted(seen_strings.items()):
+    for vlang, s in sorted(strings.items()):
         print(f"  {vlang}: {len(s)}")
 
     out_dir = OUTPUT_ROOT / "blend"
