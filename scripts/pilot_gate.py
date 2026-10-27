@@ -101,7 +101,7 @@ def replay(backends, cache):
 
 def load_state():
     p = RUN_DIR / "state.json"
-    return json.load(open(p)) if p.exists() else {"wave": 0, "jobs": {}, "history": []}
+    return json.load(open(p)) if p.exists() else {"wave": {}, "jobs": {}, "sent": {}, "history": []}
 
 
 def save_state(state):
@@ -114,72 +114,68 @@ def log(msg):
 
 
 def step(backends, cache):
-    """One step. Returns True when the pilot is finished."""
+    """One step: ingest finished batches, replay, submit the next wave for idle active models.
+    Models advance independently, so a slow batch for one model never blocks another.
+    Returns True when nothing is running and nothing is left to send."""
     state = load_state()
-    if state["jobs"]:
-        # Jobs may belong to models no longer advanced (--models narrowed): still ingest them.
-        for model in state["jobs"]:
-            if model not in backends:
-                backends[model] = make_backend(model)
-        running = []
-        for model, job in state["jobs"].items():
-            st = backends[model].status(job)
-            if st == "running":
-                running.append(model)
-            elif st == "failed":
-                log(f"batch FAILED for {model} ({job}); its requests will be resubmitted")
-        if running:
-            log(f"wave {state['wave']}: still running: {', '.join(running)}")
-            return False
-        for model, job in state["jobs"].items():
-            if backends[model].status(job) != "succeeded":
-                continue
+    if isinstance(state["wave"], int):  # older state format: one wave counter for all models
+        state["wave"] = {m: state["wave"] for m in state["jobs"]}
+    for model, job in list(state["jobs"].items()):
+        st = backends[model].status(job)
+        if st == "running":
+            continue
+        if st == "succeeded":
             res = backends[model].results(job)
             sent = state["sent"][model]
             for key, info in sent.items():
                 r = res.get(key, {"error": "missing from batch output"})
-                rec = {"key": key, "request_hash": info["request_hash"], "model": model, "wave": state["wave"],
-                       "usage": r.get("usage")}
+                rec = {"key": key, "request_hash": info["request_hash"], "model": model,
+                       "wave": state["wave"][model], "usage": r.get("usage")}
                 if "text" in r:
                     rec["text"] = r["text"]
                 else:
                     rec.update(error=r["error"], attempts=info["attempts"] + 1)
                 cache.put(rec)
-            log(f"wave {state['wave']}: ingested {len(sent)} results for {model} "
+            log(f"{model} wave {state['wave'][model]}: ingested {len(sent)} results "
                 f"({sum('text' not in res.get(k, {}) for k in sent)} errors)")
-        state["history"].append({"wave": state["wave"], "jobs": state["jobs"], "finished_at": time.time()})
-        state["jobs"], state["sent"] = {}, {}
+        else:
+            log(f"{model}: batch FAILED ({job}); its requests will be resubmitted")
+        state["history"].append({"model": model, "wave": state["wave"][model], "job": job, "status": st,
+                                 "finished_at": time.time()})
+        del state["jobs"][model]
+        del state["sent"][model]
         save_state(state)
 
-    # Replay every known model so finished episodes of inactive models are still recorded,
-    # but only send requests for the active ones.
+    # Replay every model so finished episodes of inactive models are still recorded,
+    # but only send requests for active models that have no batch running.
     records, pending, n_pending, n_failed = replay(backends, cache)
-    pending = {m: p for m, p in pending.items() if m in ACTIVE}
     with open(RUN_DIR / "records.jsonl", "w") as f:
         for r in records:
             f.write(json.dumps(r, ensure_ascii=False, default=str) + "\n")
-    total = sum(len(p) for p in pending.values())
-    log(f"replay: {len(records)} episodes finished/errored ({n_failed} errored), {n_pending} pending, "
-        f"{total} requests to send")
-    if total == 0:
-        log("pilot finished")
-        return True
-    if state["wave"] >= MAX_WAVES:
-        log(f"wave cap {MAX_WAVES} reached with {total} requests pending; stopping")
-        return True
-
-    state["wave"] += 1
-    wave_dir = RUN_DIR / f"wave{state['wave']:02d}"
-    wave_dir.mkdir(parents=True, exist_ok=True)
-    state["sent"] = {}
-    for model, reqs in pending.items():
-        if not reqs:
+    submitted = 0
+    for model in sorted(ACTIVE):
+        reqs = pending.get(model) or {}
+        if not reqs or model in state["jobs"]:
             continue
+        w = state["wave"].get(model, 0)
+        if w >= MAX_WAVES:
+            log(f"{model}: wave cap {MAX_WAVES} reached with {len(reqs)} requests pending")
+            continue
+        state["wave"][model] = w + 1
+        wave_dir = RUN_DIR / f"wave{w + 1:02d}"
+        wave_dir.mkdir(parents=True, exist_ok=True)
         job = backends[model].submit([(k, v["request"]) for k, v in reqs.items()], wave_dir)
         state["jobs"][model] = job
-        state["sent"][model] = {k: {"request_hash": v["request_hash"], "attempts": v["attempts"]} for k, v in reqs.items()}
+        state["sent"][model] = {k: {"request_hash": v["request_hash"], "attempts": v["attempts"]}
+                                for k, v in reqs.items()}
         save_state(state)  # after every submit, so a crash never resubmits a sent model
-        log(f"wave {state['wave']}: submitted {len(reqs)} requests for {model} -> {job}")
+        submitted += 1
+        log(f"{model} wave {w + 1}: submitted {len(reqs)} requests -> {job}")
+    running = sorted(state["jobs"])
+    log(f"replay: {len(records)} episodes done/errored ({n_failed} errored); running: {', '.join(running) or 'none'}")
+    if not running and not submitted:
+        log("pilot finished")
+        return True
     return False
 
 
