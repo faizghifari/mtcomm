@@ -1,0 +1,241 @@
+"""Language-gate pilot: can each player model play the tasks in each language, with no MT?
+
+Blocks (identity channel, 20 items each):
+  A  image game, LLM describer + LLM guesser, same language (en, ko, id, su, jv)
+  B  image game, native XM3600 caption + LLM guesser (en, ko, id)
+  C  blind guess, no message (once per model)
+  D  BLEnD local-visitor ceiling: local and visitor share the visitor's language (su, jv, id, ko),
+     at most 3 questions; plus the no-talk prior (max_questions=0). Renderings are the
+     unreviewed Haiku drafts.
+
+Runs in batch waves (see mtcomm.replay). Each invocation of `step` ingests finished batches,
+replays every episode, and submits the next wave; `--loop` repeats until done.
+
+Usage:
+  python scripts/pilot_gate.py plan              # count wave-1 requests per model, no calls
+  python scripts/pilot_gate.py step [--loop]     # submit / poll / ingest
+  python scripts/pilot_gate.py report
+"""
+
+import argparse
+import json
+import sys
+import time
+from collections import defaultdict
+from datetime import datetime
+from pathlib import Path
+
+from mtcomm import lid
+from mtcomm.backends import make_backend
+from mtcomm.channels import IdentityChannel
+from mtcomm.data import load_blend_items, load_image_items
+from mtcomm.game import Move, run_episode
+from mtcomm.games.blend_lv import BlendLocalVisitorGame
+from mtcomm.games.image_ref import ImageRefGame
+from mtcomm.paths import OUTPUT_ROOT
+from mtcomm.players import LLMPlayer, ScriptedPlayer
+from mtcomm.replay import BatchGenerate, CachedChannel, CallFailed, Pending, ReplayCache
+
+MODELS = ["gemini-3.8-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite",
+          "gpt-6-luna", "gpt-6.1-terra", "gpt-6.1-sol"]
+N_ITEMS = 20
+MAX_WAVES = 10
+RUN_DIR = OUTPUT_ROOT / "pilot_gate"
+# BLEnD ceiling: visitor language -> local culture whose items it uses
+BLEND_PAIRS = {"su": "South_Korea", "jv": "West_Java", "id": "South_Korea", "ko": "West_Java"}
+
+
+def episodes():
+    """Yield (episode_id, block, lang, build) where build(gen) -> (game, players)."""
+    images = load_image_items("hard")[:N_ITEMS]
+    for lang in ["en", "ko", "id", "su", "jv"]:
+        for it in images:
+            yield (f"A|{lang}|{it['item_id']}", "A", lang,
+                   lambda gen, it=it, lang=lang: (ImageRefGame(it, lang, lang),
+                                                  {"describer": LLMPlayer(gen("describer"), ""),
+                                                   "guesser": LLMPlayer(gen("guesser"), "")}))
+    for lang in ["en", "ko", "id"]:
+        for it in images:
+            yield (f"B|{lang}|{it['item_id']}", "B", lang,
+                   lambda gen, it=it, lang=lang: (ImageRefGame(it, lang, lang),
+                                                  {"describer": ScriptedPlayer([Move("message", it["captions"][lang])]),
+                                                   "guesser": LLMPlayer(gen("guesser"), "")}))
+    for it in images:
+        yield (f"C|en|{it['item_id']}", "C", "en",
+               lambda gen, it=it: (ImageRefGame(it, "en", "en", allow_message=False),
+                                   {"describer": None, "guesser": LLMPlayer(gen("guesser"), "")}))
+    blend = load_blend_items()
+    for vlang, local in BLEND_PAIRS.items():
+        items = [b for b in blend if b["visitor_lang"] == vlang and b["local_culture"] == local][:N_ITEMS]
+        for it in items:
+            for block, maxq in [("D", 3), ("Dprior", 0)]:
+                yield (f"{block}|{vlang}|{it['item_id']}", block, vlang,
+                       lambda gen, it=it, vlang=vlang, maxq=maxq: (
+                           BlendLocalVisitorGame(it, vlang, vlang, max_questions=maxq),
+                           {"visitor": LLMPlayer(gen("visitor"), ""), "local": LLMPlayer(gen("local"), "")}))
+
+
+def replay(backends, cache):
+    """Replay all episodes once. Returns finished records and pending requests per model."""
+    pending = {m: {} for m in backends}
+    records, n_pending, n_failed = [], 0, 0
+    eps = list(episodes())
+    for model, be in backends.items():
+        for eid, block, lang, build in eps:
+            gen = lambda role, eid=eid: BatchGenerate(be, cache, eid, role, pending[model])  # noqa: E731
+            gm, players = build(gen)
+            channel = CachedChannel(IdentityChannel(), cache, f"{model}|{eid}")
+            try:
+                rec = run_episode(gm, players, channel, lid=lid.check)
+                rec.update(model=model, episode=eid, block=block, lang=lang, status="done")
+                records.append(rec)
+            except Pending:
+                n_pending += 1
+            except CallFailed as e:
+                n_failed += 1
+                records.append({"model": model, "episode": eid, "block": block, "lang": lang,
+                                "status": "error", "error": str(e)[:300]})
+    return records, pending, n_pending, n_failed
+
+
+def load_state():
+    p = RUN_DIR / "state.json"
+    return json.load(open(p)) if p.exists() else {"wave": 0, "jobs": {}, "history": []}
+
+
+def save_state(state):
+    with open(RUN_DIR / "state.json", "w") as f:
+        json.dump(state, f, indent=1)
+
+
+def log(msg):
+    print(f"[{datetime.now():%H:%M:%S}] {msg}", flush=True)
+
+
+def step(backends, cache):
+    """One step. Returns True when the pilot is finished."""
+    state = load_state()
+    if state["jobs"]:
+        running = []
+        for model, job in state["jobs"].items():
+            st = backends[model].status(job)
+            if st == "running":
+                running.append(model)
+            elif st == "failed":
+                log(f"batch FAILED for {model} ({job}); its requests will be resubmitted")
+        if running:
+            log(f"wave {state['wave']}: still running: {', '.join(running)}")
+            return False
+        for model, job in state["jobs"].items():
+            if backends[model].status(job) != "succeeded":
+                continue
+            res = backends[model].results(job)
+            sent = state["sent"][model]
+            for key, info in sent.items():
+                r = res.get(key, {"error": "missing from batch output"})
+                rec = {"key": key, "request_hash": info["request_hash"], "model": model, "wave": state["wave"],
+                       "usage": r.get("usage")}
+                if "text" in r:
+                    rec["text"] = r["text"]
+                else:
+                    rec.update(error=r["error"], attempts=info["attempts"] + 1)
+                cache.put(rec)
+            log(f"wave {state['wave']}: ingested {len(sent)} results for {model} "
+                f"({sum('text' not in res.get(k, {}) for k in sent)} errors)")
+        state["history"].append({"wave": state["wave"], "jobs": state["jobs"], "finished_at": time.time()})
+        state["jobs"], state["sent"] = {}, {}
+        save_state(state)
+
+    records, pending, n_pending, n_failed = replay(backends, cache)
+    with open(RUN_DIR / "records.jsonl", "w") as f:
+        for r in records:
+            f.write(json.dumps(r, ensure_ascii=False, default=str) + "\n")
+    total = sum(len(p) for p in pending.values())
+    log(f"replay: {len(records)} episodes finished/errored ({n_failed} errored), {n_pending} pending, "
+        f"{total} requests to send")
+    if total == 0:
+        log("pilot finished")
+        return True
+    if state["wave"] >= MAX_WAVES:
+        log(f"wave cap {MAX_WAVES} reached with {total} requests pending; stopping")
+        return True
+
+    state["wave"] += 1
+    wave_dir = RUN_DIR / f"wave{state['wave']:02d}"
+    wave_dir.mkdir(parents=True, exist_ok=True)
+    state["sent"] = {}
+    for model, reqs in pending.items():
+        if not reqs:
+            continue
+        job = backends[model].submit([(k, v["request"]) for k, v in reqs.items()], wave_dir)
+        state["jobs"][model] = job
+        state["sent"][model] = {k: {"request_hash": v["request_hash"], "attempts": v["attempts"]} for k, v in reqs.items()}
+        save_state(state)  # after every submit, so a crash never resubmits a sent model
+        log(f"wave {state['wave']}: submitted {len(reqs)} requests for {model} -> {job}")
+    return False
+
+
+def plan(backends):
+    cache = ReplayCache(Path("/dev/null"))
+    _, pending, n_pending, _ = replay(backends, cache)
+    for model, reqs in pending.items():
+        n_img = sum(sum(1 for c in json.dumps(v["request"]).split('"image/jpeg"')[1:]) for v in reqs.values())
+        size = sum(len(json.dumps(v["request"])) for v in reqs.values())
+        log(f"{model}: wave-1 requests {len(reqs)}, images {n_img}, payload {size / 1e6:.1f} MB")
+
+
+def report():
+    recs = [json.loads(line) for line in open(RUN_DIR / "records.jsonl")]
+    table = defaultdict(lambda: {"n": 0, "correct": 0, "error": 0, "lid_ok": 0, "lid_n": 0, "own": 0})
+    for r in recs:
+        t = table[(r["model"], r["block"], r["lang"])]
+        t["n"] += 1
+        if r["status"] != "done":
+            t["error"] += 1
+            continue
+        t["correct"] += bool(r["score"].get("correct"))
+        t["own"] += bool(r["score"].get("own_culture"))
+        for turn in r["turns"]:
+            if turn.get("lid") is not None:
+                t["lid_n"] += 1
+                t["lid_ok"] += bool(turn["lid"]["ok"])
+    rows = []
+    for (model, block, lang), t in sorted(table.items()):
+        acc = t["correct"] / t["n"] if t["n"] else 0
+        lid_rate = t["lid_ok"] / t["lid_n"] if t["lid_n"] else None
+        rows.append({"model": model, "block": block, "lang": lang, "n": t["n"], "acc": round(acc, 3),
+                     "errors": t["error"], "own_culture": t["own"],
+                     "lid_pass": None if lid_rate is None else round(lid_rate, 3)})
+    with open(RUN_DIR / "summary.json", "w") as f:
+        json.dump(rows, f, indent=1)
+    for r in rows:
+        print(r)
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("cmd", choices=["plan", "step", "report"])
+    ap.add_argument("--loop", action="store_true")
+    ap.add_argument("--interval", type=int, default=120)
+    ap.add_argument("--models", nargs="*", default=MODELS)
+    args = ap.parse_args()
+    RUN_DIR.mkdir(parents=True, exist_ok=True)
+    backends = {m: make_backend(m) for m in args.models}
+    if args.cmd == "plan":
+        return plan(backends)
+    if args.cmd == "report":
+        return report()
+    with open(RUN_DIR / "config.json", "w") as f:
+        json.dump({m: b.config() for m, b in backends.items()}, f, indent=1)
+    cache = ReplayCache(RUN_DIR / "cache.jsonl")
+    while True:
+        done = step(backends, cache)
+        if done or not args.loop:
+            break
+        time.sleep(args.interval)
+    if done:
+        report()
+
+
+if __name__ == "__main__":
+    sys.exit(main())
