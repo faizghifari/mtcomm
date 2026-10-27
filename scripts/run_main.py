@@ -337,7 +337,7 @@ def cmd_report(opts):
         msgs = [t for t in r["turns"] if t["kind"] == "message"]
         c["turns"] += len(msgs)
         for t in msgs:
-            if t.get("lid"):
+            if t.get("lid") and len(t["source"].split()) >= 3:  # GlotLID is unreliable on "Henteu." etc.
                 c["lid_n"] += 1
                 c["lid_ok"] += bool(t["lid"]["ok"])
     rows = []

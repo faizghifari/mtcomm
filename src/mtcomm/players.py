@@ -64,7 +64,12 @@ class LLMPlayer(Player):
 
     def prompt(self, obs: Observation) -> str:
         parts = [obs.instructions]
-        if obs.inbox:
+        if obs.dialogue:
+            lines = "\n".join(f"{'You' if d['speaker'] == 'you' else 'Partner'}: "
+                              f"{d['text'] if d['text'] is not None else '(nothing arrived)'}" for d in obs.dialogue)
+            parts.append("The conversation so far, oldest first (your partner's messages as you received them):\n"
+                         + lines)
+        elif obs.inbox:
             msgs = "\n".join(f"- {m if m is not None else '(nothing arrived)'}" for m in obs.inbox)
             parts.append(f"Messages you have received from your partner, in order:\n{msgs}")
         allowed = []

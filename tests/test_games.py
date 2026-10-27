@@ -14,7 +14,8 @@ from mtcomm.channels import Channel, ChannelOutput, IdentityChannel, NoChannel, 
 from mtcomm.game import Move, Observation, run_episode  # noqa: E402
 from mtcomm.games.blend_lv import BlendLocalVisitorGame  # noqa: E402
 from mtcomm.games.image_ref import ImageRefGame  # noqa: E402
-from mtcomm.players import ScriptedPlayer, parse_action  # noqa: E402
+from mtcomm.games.mugeval import TwentyQuestionsGame  # noqa: E402
+from mtcomm.players import LLMPlayer, Player, ScriptedPlayer, parse_action  # noqa: E402
 
 
 def _obs(can_message=True, can_answer=False):
@@ -223,3 +224,29 @@ def test_image_ref_static_prompt_unchanged_by_dialogue_option():
     static = ImageRefGame(item, "ko", "id")
     assert "ask" not in static.observe("guesser").instructions
     assert static.observe("guesser").can_message is False
+
+
+def test_players_see_their_own_earlier_messages():
+    """Regression: the 20Q questioner saw only the answers and asked the same question 15 times."""
+    item = {"target_q": "kursi", "target_a": "kursi", "candidates_q": ["kursi", "meja"]}
+    gm = TwentyQuestionsGame(item, "su", "su")
+    seen = []
+
+    class Recorder(Player):
+        def __init__(self, moves):
+            self.moves = moves
+
+        def act(self, obs):
+            seen.append((obs.role, list(obs.dialogue)))
+            return self.moves.pop(0)
+
+    players = {"questioner": Recorder([Move("message", "Q1?"), Move("message", "Q2?"), Move("answer", "[[kursi]]")]),
+               "answerer": Recorder([Move("message", "Enya"), Move("message", "Henteu")])}
+    run_episode(gm, players, IdentityChannel())
+    third_q = [d for r, d in seen if r == "questioner"][2]
+    assert third_q == [{"speaker": "you", "text": "Q1?"}, {"speaker": "partner", "text": "Enya"},
+                       {"speaker": "you", "text": "Q2?"}, {"speaker": "partner", "text": "Henteu"}]
+    assert all(d == [] for r, d in seen if r == "answerer")  # MuG-Eval answerer stays stateless
+    prompt = LLMPlayer(lambda *a: "", "x").prompt(Observation(
+        "questioner", "su", "intro", dialogue=third_q, inbox=["Enya", "Henteu"], can_answer=True))
+    assert "You: Q1?" in prompt and "Partner: Henteu" in prompt

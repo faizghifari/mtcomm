@@ -20,6 +20,9 @@ class Observation:
     instructions: str  # what this player is told, including private information
     images: List[str] = field(default_factory=list)  # image paths this player can see
     inbox: List[Optional[str]] = field(default_factory=list)  # messages received so far (already translated)
+    # The whole conversation in this player's view (own text as written, partner's as delivered).
+    # Filled by run_episode for players whose game shares a history (non-empty inbox).
+    dialogue: List[dict] = field(default_factory=list)
     can_message: bool = True
     can_answer: bool = False
 
@@ -51,6 +54,10 @@ class GameMaster(ABC):
 
     def other(self, role: str) -> str:
         return next(r for r in self.roles if r != role)
+
+    def dialogue(self, role: str) -> List[dict]:
+        return [{"speaker": "you", "text": t.source} if t.role == role else {"speaker": "partner", "text": t.delivered}
+                for t in self.turns if t.kind == "message"]
 
     def history(self) -> List[dict]:
         return [{"role": t.role, "text": t.source} for t in self.turns if t.kind == "message"]
@@ -89,7 +96,10 @@ def run_episode(gm: GameMaster, players: Dict[str, "Player"], channel: Channel,
         if gm.is_done():
             break
         role = gm.next_role()
-        move = players[role].act(gm.observe(role))
+        obs = gm.observe(role)
+        if obs.inbox:  # without its own earlier messages a player repeats itself (seen in 20Q dry run)
+            obs.dialogue = gm.dialogue(role)
+        move = players[role].act(obs)
         check = lid(move.content, gm.roles[role]) if (lid and move.kind == "message") else None
         if move.kind == "message":
             out = channel.translate(move.content, gm.roles[role], gm.roles[gm.other(role)], history=gm.history())
