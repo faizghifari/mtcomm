@@ -5,6 +5,7 @@ Sundanese/Javanese with Indonesian (mt-eval keeps a review list for exactly this
 pass threshold for the admission gate is decided after the pilot, not here.
 """
 
+import threading
 from functools import lru_cache
 
 from interpreter_agent_eval.utils.language_verification import load_glotlid_model, verify_language_with_glotlid
@@ -30,8 +31,12 @@ def _model():
     return _NumpyTwoSafe(m) if m is not None else None
 
 
+_LOCK = threading.Lock()
+
+
 def check(text: str, lang_code: str, min_confidence: float = 0.5) -> dict:
-    res = verify_language_with_glotlid(_model(), text, lang(lang_code).iso3, min_confidence=min_confidence,
-                                       context_name="player")
+    with _LOCK:
+        res = verify_language_with_glotlid(_model(), text, lang(lang_code).iso3, min_confidence=min_confidence,
+                                           context_name="player")
     return {"ok": res.is_correct, "detected": res.detected_language, "script": res.detected_script,
             "confidence": round(float(res.confidence), 3), "needs_review": res.needs_review}

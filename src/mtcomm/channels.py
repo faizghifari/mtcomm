@@ -15,6 +15,8 @@ translators can be tested as an ablation.
 """
 
 import os
+import threading
+import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import List, Optional
@@ -63,6 +65,7 @@ class NLLBChannel(Channel):
         self.num_beams, self.max_new_tokens = num_beams, max_new_tokens
         self.name = f"nllb:{model_name.split('/')[-1]}"
         self._tok = self._model = None
+        self._lock = threading.Lock()  # one GPU model shared by episode threads
 
     def supports(self, src, tgt):
         return languages.get(src).nllb is not None and languages.get(tgt).nllb is not None
@@ -74,11 +77,15 @@ class NLLBChannel(Channel):
 
             self._tok = AutoTokenizer.from_pretrained(self.model_name)
             dtype = torch.float16 if self.device.startswith("cuda") else torch.float32
-            self._model = AutoModelForSeq2SeqLM.from_pretrained(self.model_name, torch_dtype=dtype).to(self.device).eval()
+            self._model = AutoModelForSeq2SeqLM.from_pretrained(self.model_name, dtype=dtype, low_cpu_mem_usage=True).to(self.device).eval()
 
     def translate(self, text, src, tgt, history=None):
         if not self.supports(src, tgt):
             raise ValueError(f"{self.name}: unsupported pair {src}->{tgt}")
+        with self._lock:
+            return self._translate(text, src, tgt)
+
+    def _translate(self, text, src, tgt):
         self._load()
         import torch
 
@@ -132,9 +139,10 @@ class GoogleWebChannel(Channel):
     FALLBACK_URL = "https://clients5.google.com/translate_a/t"
     UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 
-    def __init__(self, timeout=20.0):
-        self.timeout = timeout
+    def __init__(self, timeout=20.0, max_concurrent=2, retries=5):
+        self.timeout, self.retries = timeout, retries
         self._session = None
+        self._sem = threading.Semaphore(max_concurrent)
 
     def supports(self, src, tgt):
         return languages.get(src).google is not None and languages.get(tgt).google is not None
@@ -145,6 +153,16 @@ class GoogleWebChannel(Channel):
             raise ValueError(f"{self.name}: unsupported pair {src}->{tgt}")
         if not text.strip():
             return ChannelOutput("", {"channel": self.name})
+        with self._sem:
+            for attempt in range(self.retries):
+                try:
+                    return self._translate(text, s, t)
+                except Exception as e:  # throttled on both endpoints, or a network error
+                    err = e
+                    time.sleep(min(60, 3 * 2 ** attempt))
+            raise err
+
+    def _translate(self, text, s, t):
         if self._session is None:
             import requests
 
@@ -213,6 +231,32 @@ class LLMChannel(Channel):
             return ChannelOutput(None, {"channel": self.name, "dry_run": True, "context": context})
         agent = InterpreterAgent(self.provider, s.iso3, t.iso3)
         return ChannelOutput(agent.translate(text, context=context), {"channel": self.name})
+
+
+class BackendProvider:
+    """Adapts an mtcomm backend (synchronous call) to mt-eval's LLMProvider interface."""
+
+    def __init__(self, backend):
+        self.backend = backend
+
+    def generate(self, prompt, system_prompt=None, **kwargs):
+        out = self.backend.call(self.backend.build(prompt, system_prompt, []))
+        if "text" not in out:
+            raise RuntimeError(f"{self.backend.model}: {out.get('error')}")
+        return out["text"].strip()
+
+    def get_provider_name(self):
+        return self.backend.model
+
+
+def llm_translator(model: str, with_history: bool = False) -> "LLMChannel":
+    """An LLM translator using mt-eval's InterpreterAgent brief; plain-text output, synchronous calls."""
+    from .backends import make_backend
+
+    kw = {"json_mode": False}
+    if model.startswith("gpt"):
+        kw["reasoning_effort"] = "low"
+    return LLMChannel(BackendProvider(make_backend(model, **kw)), model, with_history=with_history, dry_run=False)
 
 
 class PivotChannel(Channel):
