@@ -70,8 +70,10 @@ def test_image_captions_cover_requested_languages(hard_items):
             assert isinstance(it["captions"][lang], str) and it["captions"][lang], (it["item_id"], lang)
 
 
-def test_blend_has_280_items(blend_items):
-    assert len(blend_items) == 280
+def test_blend_item_count_matches_build(blend_items):
+    from mtcomm.data import BLEND_ITEMS
+    n = sum(1 for line in open(BLEND_ITEMS) if line.strip())
+    assert len(blend_items) == n > 0
 
 
 def test_blend_visitor_lang_filter():

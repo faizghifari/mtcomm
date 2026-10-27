@@ -14,6 +14,7 @@ import json
 import random
 from collections import Counter
 from functools import lru_cache
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import openpyxl
@@ -24,7 +25,7 @@ TIERS = ("random", "hard")
 DEFAULT_CAPTION_LANGS = ("en", "ko", "id", "su", "jv")
 USER_CAPTION_LANGS = ("su", "jv")  # written by hand in captions_to_write.csv, not in XM3600
 
-MANIFEST = DATA_ROOT / "derived" / "xm3600" / "manifest_poc1_v1.json"
+MANIFEST = DATA_ROOT / "derived" / "xm3600" / "manifest_poc1_v2.json"  # v2: text-free targets
 XM3600_CAPTIONS = XM3600_DIR / "captions" / "captions.jsonl"
 XM3600_IMAGES = XM3600_DIR / "images"
 USER_CAPTIONS_CSV = ANNOTATION_DIR / "xm3600_captioning" / "captions_to_write.csv"
@@ -87,7 +88,8 @@ def _user_captions(langs: Tuple[str, ...]) -> Dict[str, Dict[str, Optional[str]]
     return out
 
 
-def load_image_items(tier: str, caption_langs=DEFAULT_CAPTION_LANGS, n_candidates: int = 6, seed: int = 0) -> List[dict]:
+def load_image_items(tier: str, caption_langs=DEFAULT_CAPTION_LANGS, n_candidates: int = 6, seed: int = 0,
+                     manifest_path=None) -> List[dict]:
     """One item per manifest entry: the target plus the first n_candidates-1 distractors of `tier`,
     shuffled deterministically. `gold` is the 1-based position of the target in `candidates`."""
     if tier not in TIERS:
@@ -99,7 +101,7 @@ def load_image_items(tier: str, caption_langs=DEFAULT_CAPTION_LANGS, n_candidate
     xm = _xm3600_captions(xm_langs) if xm_langs else {}
     user = _user_captions(tuple(lang for lang in caption_langs if lang in USER_CAPTION_LANGS))
 
-    manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))["items"]
+    manifest = json.loads(Path(manifest_path or MANIFEST).read_text(encoding="utf-8"))["items"]
     items = []
     for it in manifest:
         item_id, target_key = it["item_id"], it["image_key"]
@@ -195,10 +197,11 @@ def _top_answers(entries: List[dict], n: int) -> List[dict]:
 
 
 def load_blend_items(visitor_lang: Optional[str] = None, n_distractor_questions: int = 4,
-                     max_answers: int = 5, seed: int = 0) -> List[dict]:
+                     max_answers: int = 5, seed: int = 0, items_path=None) -> List[dict]:
     """Local-visitor items in the shape games/blend_lv.py expects. local_knowledge holds the target
     question plus up to n_distractor_questions same-topic questions from the same culture, shuffled."""
-    rows = [json.loads(line) for line in BLEND_ITEMS.read_text(encoding="utf-8").splitlines() if line.strip()]
+    rows = [json.loads(line) for line in Path(items_path or BLEND_ITEMS).read_text(encoding="utf-8").splitlines()
+            if line.strip()]
     if visitor_lang is not None:
         rows = [r for r in rows if r["visitor_lang"] == visitor_lang]
 
