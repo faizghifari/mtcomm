@@ -100,6 +100,18 @@ def conditions(a, b):
     return conds
 
 
+MCQ_SCREEN = DATA_ROOT / "derived" / "mcq" / "mcq_screen_v1.json"
+
+
+def task_items(task, load, a, b, n):
+    """MCQ uses the items the no-talk prior got wrong (scripts/mcq_prior_screen.py) when screened."""
+    if task != "mcq" or not MCQ_SCREEN.exists():
+        return load(a, b, n=n)
+    screen = json.load(open(MCQ_SCREEN))
+    by_id = {it["item_id"]: it for it in load(a, b, n=screen["pool"])}
+    return [by_id[i] for i in screen["item_ids"]][:n]
+
+
 def episodes(opts):
     """Yield dicts: id, task, pair, cond, eval_lang, build() -> (game, roles).
 
@@ -133,7 +145,7 @@ def episodes(opts):
         for a, b in pairs:
             for cond in conditions(a, b) + ["ceiling", "prior"]:
                 lb = a if cond == "ceiling" else b
-                for it in load(a, lb, n=n):
+                for it in task_items(task, load, a, lb, n):
                     yield from emit(task, f"{a}-{b}", cond, a, it["item_id"],
                                     lambda it=it, a=a, lb=lb, cond=cond, Game=Game: (
                                         Game(it, a, lb, allow_message=cond != "prior"),
