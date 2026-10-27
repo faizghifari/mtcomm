@@ -41,33 +41,36 @@ MODELS = ["gemini-3.8-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite",
 N_ITEMS = 20
 MAX_WAVES = 10
 ACTIVE = set(MODELS)  # models whose episodes are replayed and advanced
-RUN_DIR = OUTPUT_ROOT / "pilot_gate"
+RUN_DIR = OUTPUT_ROOT / "pilot_gate"  # overridden by --run
+OPTS = {"blend_items": None, "manifest": None, "max_words": None, "blocks": None}
 # BLEnD ceiling: visitor language -> local culture whose items it uses
 BLEND_PAIRS = {"su": "South_Korea", "jv": "West_Java", "id": "South_Korea", "ko": "West_Java"}
 
 
 def episodes():
     """Yield (episode_id, block, lang, build) where build(gen) -> (game, players)."""
-    images = load_image_items("hard")[:N_ITEMS]
+    images = load_image_items("hard", manifest_path=OPTS["manifest"])[:N_ITEMS]
     for lang in ["en", "ko", "id", "su", "jv"]:
         for it in images:
             yield (f"A|{lang}|{it['item_id']}", "A", lang,
-                   lambda gen, it=it, lang=lang: (ImageRefGame(it, lang, lang),
+                   lambda gen, it=it, lang=lang: (ImageRefGame(it, lang, lang, max_words=OPTS["max_words"]),
                                                   {"describer": LLMPlayer(gen("describer"), ""),
                                                    "guesser": LLMPlayer(gen("guesser"), "")}))
     for lang in ["en", "ko", "id"]:
         for it in images:
             yield (f"B|{lang}|{it['item_id']}", "B", lang,
-                   lambda gen, it=it, lang=lang: (ImageRefGame(it, lang, lang),
+                   lambda gen, it=it, lang=lang: (ImageRefGame(it, lang, lang, max_words=OPTS["max_words"]),
                                                   {"describer": ScriptedPlayer([Move("message", it["captions"][lang])]),
                                                    "guesser": LLMPlayer(gen("guesser"), "")}))
     for it in images:
         yield (f"C|en|{it['item_id']}", "C", "en",
-               lambda gen, it=it: (ImageRefGame(it, "en", "en", allow_message=False),
+               lambda gen, it=it: (ImageRefGame(it, "en", "en", allow_message=False, max_words=OPTS["max_words"]),
                                    {"describer": None, "guesser": LLMPlayer(gen("guesser"), "")}))
-    blend = load_blend_items()
+    blend = load_blend_items(items_path=OPTS["blend_items"])
     for vlang, local in BLEND_PAIRS.items():
-        items = [b for b in blend if b["visitor_lang"] == vlang and b["local_culture"] == local][:N_ITEMS]
+        # Items whose rendered options collide (e.g. football/soccer -> one word) are unanswerable.
+        items = [b for b in blend if b["visitor_lang"] == vlang and b["local_culture"] == local
+                 and len({v.strip().lower() for v in b["options"].values()}) == len(b["options"])][:N_ITEMS]
         for it in items:
             for block, maxq in [("D", 3), ("Dprior", 0)]:
                 yield (f"{block}|{vlang}|{it['item_id']}", block, vlang,
@@ -80,7 +83,7 @@ def replay(backends, cache):
     """Replay all episodes once. Returns finished records and pending requests per model."""
     pending = {m: {} for m in backends}
     records, n_pending, n_failed = [], 0, 0
-    eps = list(episodes())
+    eps = [e for e in episodes() if not OPTS["blocks"] or e[1] in OPTS["blocks"]]
     for model, be in backends.items():
         for eid, block, lang, build in eps:
             gen = lambda role, eid=eid: BatchGenerate(be, cache, eid, role, pending[model])  # noqa: E731
@@ -222,17 +225,33 @@ def main():
     ap.add_argument("--loop", action="store_true")
     ap.add_argument("--interval", type=int, default=120)
     ap.add_argument("--models", nargs="*", default=MODELS)
+    ap.add_argument("--run", default="pilot_gate", help="run directory name under outputs/mtcomm")
+    ap.add_argument("--blend-items", default=None, help="BLEnD items jsonl (default: current build)")
+    ap.add_argument("--manifest", default=None, help="XM3600 manifest (default: v2, text-free)")
+    ap.add_argument("--max-words", type=int, default=None, help="describer word limit (default: none)")
+    ap.add_argument("--blocks", nargs="*", default=None, help="only these blocks (A B C D Dprior)")
     args = ap.parse_args()
+    global RUN_DIR
+    RUN_DIR = OUTPUT_ROOT / args.run
+    OPTS.update(blend_items=args.blend_items, manifest=args.manifest, max_words=args.max_words, blocks=args.blocks)
     RUN_DIR.mkdir(parents=True, exist_ok=True)
     global ACTIVE
     ACTIVE = set(args.models)
-    backends = {m: make_backend(m) for m in MODELS}  # all replayed; only ACTIVE are advanced
+    # Replay the active models plus any model already in this run's cache or state (so earlier
+    # results stay in records); only ACTIVE models are advanced.
+    cache_models = set()
+    if (RUN_DIR / "cache.jsonl").exists():
+        cache_models = {json.loads(line).get("model") for line in open(RUN_DIR / "cache.jsonl") if line.strip()}
+    if (RUN_DIR / "state.json").exists():
+        cache_models |= set(json.load(open(RUN_DIR / "state.json"))["jobs"])
+    backends = {m: make_backend(m) for m in MODELS if m in ACTIVE or m in cache_models}
     if args.cmd == "plan":
         return plan(backends)
     if args.cmd == "report":
         return report()
     with open(RUN_DIR / "config.json", "w") as f:
-        json.dump({m: b.config() for m, b in backends.items()}, f, indent=1)
+        json.dump({"models": {m: b.config() for m, b in backends.items()}, "active": sorted(ACTIVE), **OPTS},
+                  f, indent=1, default=str)
     cache = ReplayCache(RUN_DIR / "cache.jsonl")
     while True:
         done = step(backends, cache)
