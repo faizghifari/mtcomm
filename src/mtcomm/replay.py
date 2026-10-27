@@ -126,8 +126,9 @@ class SyncGenerate(BatchGenerate):
 class CachedChannel(Channel):
     """Caches channel outputs per (episode, call index) so non-deterministic channels replay identically."""
 
-    def __init__(self, inner: Channel, cache: ReplayCache, episode_id: str):
+    def __init__(self, inner: Channel, cache: ReplayCache, episode_id: str, offline: bool = False):
         self.inner, self.cache, self.episode_id = inner, cache, episode_id
+        self.offline = offline  # raise Pending on a miss instead of translating (batch phase)
         self.name = inner.name
         self.n = 0
 
@@ -140,6 +141,8 @@ class CachedChannel(Channel):
         rec = self.cache.get(key)
         if rec is not None and rec["source"] == text:
             return ChannelOutput(rec["text"], rec["meta"])
+        if self.offline:
+            raise Pending(key)
         out = self.inner.translate(text, src, tgt, history)
         self.cache.put({"key": key, "source": text, "text": out.text, "meta": out.meta})
         return out

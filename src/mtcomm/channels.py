@@ -230,7 +230,11 @@ class LLMChannel(Channel):
         if self.dry_run:
             return ChannelOutput(None, {"channel": self.name, "dry_run": True, "context": context})
         agent = InterpreterAgent(self.provider, s.iso3, t.iso3)
-        return ChannelOutput(agent.translate(text, context=context), {"channel": self.name})
+        text_out = agent.translate(text, context=context)
+        meta = {"channel": self.name}
+        if hasattr(self.provider, "take_usage"):
+            meta["usage"] = self.provider.take_usage()
+        return ChannelOutput(text_out, meta)
 
 
 class BackendProvider:
@@ -238,12 +242,18 @@ class BackendProvider:
 
     def __init__(self, backend):
         self.backend = backend
+        self._local = threading.local()  # usage of the calls made by the current thread's translation
 
     def generate(self, prompt, system_prompt=None, **kwargs):
         out = self.backend.call(self.backend.build(prompt, system_prompt, []))
+        self._local.usage = getattr(self._local, "usage", []) + [out.get("usage")]
         if "text" not in out:
             raise RuntimeError(f"{self.backend.model}: {out.get('error')}")
         return out["text"].strip()
+
+    def take_usage(self):
+        usage, self._local.usage = getattr(self._local, "usage", []), []
+        return usage
 
     def get_provider_name(self):
         return self.backend.model
