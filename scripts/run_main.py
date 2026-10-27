@@ -34,20 +34,21 @@ from datetime import datetime
 from mtcomm import lid
 from mtcomm.backends import make_backend
 from mtcomm.channels import GoogleWebChannel, IdentityChannel, NLLBChannel, NoChannel, PivotChannel, llm_translator
-from mtcomm.data import load_blend_items, load_image_items
+from mtcomm.data import load_blend_items, load_image_items, load_sequence_items
 from mtcomm.data_mugeval import load_mcq_items, load_twentyq_items
 from mtcomm.game import run_episode
 from mtcomm.games.blend_lv import BlendLocalVisitorGame
 from mtcomm.games.image_ref import ImageRefGame
 from mtcomm.games.mugeval import MCQConversationGame, TwentyQuestionsGame
+from mtcomm.games.sequence import SequenceGame
 from mtcomm.paths import DATA_ROOT, OUTPUT_ROOT
 from mtcomm.players import LLMPlayer
 from mtcomm.replay import BatchGenerate, CachedChannel, CallFailed, Pending, ReplayCache, SyncGenerate
 
 PLAYER = "gemini-3.8-flash"
 PERTURB_MANIFEST = DATA_ROOT / "derived" / "perturb" / "full60" / "manifest_perturb_full60.json"
-TASKS = ["image", "mcq", "twentyq", "culture"]
-# (a, b): image describer=a, guesser=b; MuG-Eval questioner=a, answerer=b.
+TASKS = ["image", "mcq", "twentyq", "culture", "sequence"]
+# (a, b): image describer=a, guesser=b; sequence narrator=a, arranger=b; MuG-Eval questioner=a, answerer=b.
 PAIRS = [("su", "jv"), ("jv", "su"), ("su", "ko"), ("ko", "su")]
 # Culture: (local culture, visitor language); the local speaks the culture's language.
 CULTURE_PAIRS = [("West_Java", "jv"), ("West_Java", "ko"), ("South_Korea", "su")]
@@ -138,6 +139,16 @@ def episodes(opts):
                                         ImageRefGame(it, da, b, allow_message=cond != "prior", max_words=14,
                                                      max_questions=3 if cond != "prior" else 0),
                                         ["describer", "guesser"]))
+    if "sequence" in tasks:
+        items = load_sequence_items()[:n]
+        for a, b in pairs:
+            for it in items:
+                for cond in conditions(a, b) + ["ceiling", "prior"]:
+                    na = b if cond == "ceiling" else a
+                    yield from emit("sequence", f"{a}-{b}", cond, b, it["item_id"],
+                                    lambda it=it, na=na, b=b, cond=cond: (
+                                        SequenceGame(it, na, b, allow_message=cond != "prior"),
+                                        ["narrator", "arranger"]))
     for task, Game, load in [("mcq", MCQConversationGame, load_mcq_items),
                              ("twentyq", TwentyQuestionsGame, load_twentyq_items)]:
         if task not in tasks:

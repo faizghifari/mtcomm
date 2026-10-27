@@ -272,3 +272,27 @@ def summarize() -> None:
 
 if __name__ == "__main__":
     summarize()
+
+
+# ---------------------------------------------------------------- sequence ordering (Bloom-VIST)
+
+SEQUENCE_MANIFEST = DATA_ROOT / "derived" / "bloom_vist" / "manifest_seq_v1.json"
+
+
+def load_sequence_items(seed: int = 0, manifest_path=None) -> List[dict]:
+    """One item per story: `story` in true order, `shuffled` (the arranger's order, never the identity),
+    and `gold`, the arranger's photo number for each story position."""
+    path = Path(manifest_path or SEQUENCE_MANIFEST)
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    image_dir = path.parent / "images"
+    items = []
+    for i, s in enumerate(doc["stories"]):
+        story = [str(image_dir / f) for f in s["images"]]
+        rng = random.Random(f"{seed}-{s['story_id']}")
+        shuffled = list(story)
+        while shuffled == story:
+            rng.shuffle(shuffled)
+        items.append({"item_id": f"S{i + 1:02d}", "story_id": s["story_id"], "title": s["title"],
+                      "licence": s["licence"], "story": story, "shuffled": shuffled,
+                      "gold": [shuffled.index(p) + 1 for p in story]})
+    return items

@@ -254,7 +254,7 @@ def test_players_see_their_own_earlier_messages():
     assert "You: Q1?" in prompt and "Partner: Henteu" in prompt
 
 
-@pytest.mark.parametrize("game", ["image", "culture", "mcq", "twentyq"])
+@pytest.mark.parametrize("game", ["image", "culture", "mcq", "twentyq", "sequence"])
 def test_every_dialogue_game_shows_history(game):
     """At every turn a player sees every message sent so far (its own included); only MuG-Eval's MCQ
     answerer is reset per question, as in MuG-Eval's mcqa_gen_answer.py."""
@@ -280,6 +280,11 @@ def test_every_dialogue_game_shows_history(game):
                 "own_culture_idx": "B", "local_place": "Bandung", "visitor_own_culture": "Indonesia",
                 "local_knowledge": [{"question": "q", "answers": [{"answers": ["a"], "count": 3}]}]}
         gm, roles = BlendLocalVisitorGame(item, "su", "jv", max_questions=3, min_questions=1), ["visitor", "local"]
+    elif game == "sequence":
+        from mtcomm.games.sequence import SequenceGame
+
+        item = {"story": ["p1", "p2"], "shuffled": ["p2", "p1"], "gold": [2, 1]}
+        gm, roles = SequenceGame(item, "su", "jv", max_questions=3), ["narrator", "arranger"]
     elif game == "mcq":
         item = {"passage_a": "p", "question_q": "q", "options_q": ["a", "b", "c", "d"], "gold": 1}
         gm, roles = MCQConversationGame(item, "su", "jv"), ["questioner", "answerer"]
@@ -290,3 +295,40 @@ def test_every_dialogue_game_shows_history(game):
     assert sum(1 for _, _, sent in seen if len(sent) >= 2) >= 2  # the game really went several turns
     for role, dialogue, sent in seen:
         assert dialogue == ([] if (game == "mcq" and role == "answerer") else sent), (role, dialogue, sent)
+
+
+def test_sequence_game_order_scoring_and_turns():
+    from mtcomm.games.sequence import SequenceGame, kendall_tau
+
+    item = {"story": ["p1", "p2", "p3"], "shuffled": ["p3", "p1", "p2"], "gold": [2, 3, 1]}
+    gm = SequenceGame(item, "su", "jv", max_questions=1)
+    narrator = ScriptedPlayer([Move("message", "first a cat, then a dog, then a bird"), Move("message", "yes")])
+    arranger = ScriptedPlayer([Move("message", "is the bird last?"), Move("answer", "Order: 2, 3, 1")])
+    rec = run_episode(gm, {"narrator": narrator, "arranger": arranger}, IdentityChannel())
+    assert [(t["role"], t["kind"]) for t in rec["turns"]] == [
+        ("narrator", "message"), ("arranger", "message"), ("narrator", "message"), ("arranger", "answer")]
+    assert rec["score"]["correct"] is True and rec["score"]["kendall_tau"] == 1.0
+    assert gm.observe("arranger").can_message is False
+    # Partly right and malformed answers.
+    assert kendall_tau([1, 2, 3], [3, 2, 1]) == -1.0
+    gm2 = SequenceGame(item, "su", "jv", allow_message=False)
+    assert gm2.next_role() == "arranger"
+    gm2.apply("arranger", Move("answer", "2, 1, 3"))
+    s = gm2.score()
+    assert s["correct"] is False and s["positions_correct"] == 1 and s["valid_format"] is True
+    gm3 = SequenceGame(item, "su", "jv", allow_message=False)
+    gm3.apply("arranger", Move("answer", "2, 2, 1"))
+    assert gm3.score()["valid_format"] is False and gm3.score()["correct"] is False
+
+
+def test_sequence_items_shuffled_and_gold_consistent():
+    from mtcomm.data import SEQUENCE_MANIFEST, load_sequence_items
+
+    if not SEQUENCE_MANIFEST.exists():
+        pytest.skip("Bloom-VIST sets not built")
+    items = load_sequence_items()
+    assert len(items) == 30
+    for it in items:
+        assert it["shuffled"] != it["story"] and sorted(it["shuffled"]) == sorted(it["story"])
+        assert [it["shuffled"][g - 1] for g in it["gold"]] == it["story"]
+        assert all(Path(p).exists() for p in it["story"])
