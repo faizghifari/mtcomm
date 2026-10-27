@@ -10,7 +10,7 @@ from typing import List, Optional
 
 
 class GeminiVision:
-    def __init__(self, model: str = "gemini-3.1-flash-lite-preview", temperature: float = 0.0, dry_run: bool = True):
+    def __init__(self, model: str = "gemini-3.1-flash-lite", temperature: float = 0.0, dry_run: bool = True):
         self.model, self.temperature, self.dry_run = model, temperature, dry_run
         self.calls = []  # dry-run log: prompts and image counts, for cost estimation
         self._client = None
