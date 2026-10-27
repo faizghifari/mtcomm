@@ -20,9 +20,13 @@ from ..languages import get as lang
 
 
 class BlendLocalVisitorGame(GameMaster):
-    def __init__(self, item: dict, local_lang: str, visitor_lang: str, max_questions: int = 3):
+    def __init__(self, item: dict, local_lang: str, visitor_lang: str, max_questions: int = 3,
+                 min_questions: int = 0):
         super().__init__(item, {"visitor": visitor_lang, "local": local_lang})
         self.max_questions = max_questions  # 0 = no-communication prior
+        # Visitors that may answer at once often do (pilot: Flash-Lite models never asked), so the
+        # protocol can require at least `min_questions` messages before an answer is allowed.
+        self.min_questions = min(min_questions, max_questions)
 
     def _asked(self):
         return sum(1 for t in self.turns if t.role == "visitor" and t.kind == "message")
@@ -51,14 +55,20 @@ class BlendLocalVisitorGame(GameMaster):
         can_ask = asked < self.max_questions
         opts = "\n".join(f"{k}. {v}" for k, v in sorted(self.item["options"].items()))
         name = lang(self.roles[role]).name
-        budget = (f"You may ask the local up to {self.max_questions - asked} more message(s), in {name}, before "
-                  f"answering." if can_ask else "You cannot ask anything more; answer now.")
+        must_ask = asked < self.min_questions
+        if must_ask:
+            budget = (f"You must ask the local at least {self.min_questions - asked} more message(s), in {name}, "
+                      f"before answering (at most {self.max_questions - asked}).")
+        elif can_ask:
+            budget = f"You may ask the local up to {self.max_questions - asked} more message(s), in {name}, before answering."
+        else:
+            budget = "You cannot ask anything more; answer now."
         return Observation(
             role, self.roles[role],
             f"You are a visitor in {self.item['local_place']}. You must answer this question the way LOCAL people "
             f"there would, not the way people from your home would:\n{self.item['question']}\n{opts}\n{budget} "
             f"Your final answer is only the option letter.",
-            inbox=list(self.inbox[role]), can_message=can_ask, can_answer=True)
+            inbox=list(self.inbox[role]), can_message=can_ask, can_answer=not must_ask)
 
     def is_done(self):
         return any(t.kind == "answer" and t.role == "visitor" for t in self.turns)
