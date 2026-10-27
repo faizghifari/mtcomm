@@ -72,7 +72,8 @@ def test_image_ref_correct_guess_and_message_delivered():
 
     assert rec["finished"] is True
     assert rec["channel"] == "identity"
-    assert rec["score"] == {"guess": 2, "gold": 2, "correct": True, "describer_words": 3, "over_word_limit": False}
+    assert rec["score"] == {"guess": 2, "gold": 2, "correct": True, "describer_words": 3, "questions_asked": 0,
+                            "over_word_limit": False}
     assert [(t.role, t.kind) for t in gm.turns] == [("describer", "message"), ("guesser", "answer")]
     assert gm.inbox["guesser"] == ["a red bus"]
     assert gm.observe("guesser").inbox == ["a red bus"]
@@ -199,3 +200,26 @@ def test_pivot_channel_single_channel_reuses_first_leg():
 
     assert out.text == "hola|1|1"
     assert out.meta["pivot_text"] == "hola|1"
+
+
+def test_image_ref_dialogue_turn_order_and_budget():
+    item = {"target": "t.jpg", "candidates": ["a.jpg", "t.jpg", "c.jpg"], "gold": 2}
+    gm = ImageRefGame(item, "ko", "id", max_questions=2)
+    describer = ScriptedPlayer([Move("message", "a red bus"), Move("message", "two windows"),
+                                Move("message", "no people")])
+    guesser = ScriptedPlayer([Move("message", "how many windows?"), Move("message", "any people?"),
+                              Move("answer", "2")])
+    rec = run_episode(gm, {"describer": describer, "guesser": guesser}, IdentityChannel())
+    roles = [(t["role"], t["kind"]) for t in rec["turns"]]
+    assert roles == [("describer", "message"), ("guesser", "message"), ("describer", "message"),
+                     ("guesser", "message"), ("describer", "message"), ("guesser", "answer")]
+    assert rec["score"]["correct"] is True and rec["score"]["questions_asked"] == 2
+    # Budget used up: the guesser can no longer ask.
+    assert gm.observe("guesser").can_message is False
+
+
+def test_image_ref_static_prompt_unchanged_by_dialogue_option():
+    item = {"target": "t.jpg", "candidates": ["a.jpg", "t.jpg"], "gold": 2}
+    static = ImageRefGame(item, "ko", "id")
+    assert "ask" not in static.observe("guesser").instructions
+    assert static.observe("guesser").can_message is False
