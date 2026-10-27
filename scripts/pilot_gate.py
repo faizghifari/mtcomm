@@ -40,6 +40,7 @@ MODELS = ["gemini-3.8-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite",
           "gpt-6-luna", "gpt-6.1-terra", "gpt-6.1-sol"]
 N_ITEMS = 20
 MAX_WAVES = 10
+ACTIVE = set(MODELS)  # models whose episodes are replayed and advanced
 RUN_DIR = OUTPUT_ROOT / "pilot_gate"
 # BLEnD ceiling: visitor language -> local culture whose items it uses
 BLEND_PAIRS = {"su": "South_Korea", "jv": "West_Java", "id": "South_Korea", "ko": "West_Java"}
@@ -116,6 +117,10 @@ def step(backends, cache):
     """One step. Returns True when the pilot is finished."""
     state = load_state()
     if state["jobs"]:
+        # Jobs may belong to models no longer advanced (--models narrowed): still ingest them.
+        for model in state["jobs"]:
+            if model not in backends:
+                backends[model] = make_backend(model)
         running = []
         for model, job in state["jobs"].items():
             st = backends[model].status(job)
@@ -146,7 +151,10 @@ def step(backends, cache):
         state["jobs"], state["sent"] = {}, {}
         save_state(state)
 
+    # Replay every known model so finished episodes of inactive models are still recorded,
+    # but only send requests for the active ones.
     records, pending, n_pending, n_failed = replay(backends, cache)
+    pending = {m: p for m, p in pending.items() if m in ACTIVE}
     with open(RUN_DIR / "records.jsonl", "w") as f:
         for r in records:
             f.write(json.dumps(r, ensure_ascii=False, default=str) + "\n")
@@ -220,6 +228,8 @@ def main():
     ap.add_argument("--models", nargs="*", default=MODELS)
     args = ap.parse_args()
     RUN_DIR.mkdir(parents=True, exist_ok=True)
+    global ACTIVE
+    ACTIVE = set(args.models)
     backends = {m: make_backend(m) for m in args.models}
     if args.cmd == "plan":
         return plan(backends)
