@@ -83,6 +83,11 @@ def main():
     ap.add_argument("--n-distractors", type=int, default=5)
     ap.add_argument("--dup-threshold", type=float, default=0.95)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--version", default="poc1_v1")
+    ap.add_argument("--exclude-text", action="store_true",
+                    help="skip targets where OCR found readable text (scripts/xm3600_detect_text.py)")
+    ap.add_argument("--ocr-min-conf", type=float, default=0.3)
+    ap.add_argument("--ocr-min-area", type=float, default=0.0005)
     args = ap.parse_args()
 
     caps = load_captions()
@@ -97,6 +102,15 @@ def main():
         by_locale[caps[k]["image/locale"]].append(i)
     for idx in by_locale.values():
         rng.shuffle(idx)
+
+    has_text = set()
+    if args.exclude_text:
+        ocr = json.load(open(DERIVED / "ocr_text.json"))
+        for k, boxes in ocr.items():
+            if any(b["conf"] >= args.ocr_min_conf and b["area"] >= args.ocr_min_area
+                   and sum(ch.isalnum() for ch in b["text"]) >= 2 for b in boxes):
+                has_text.add(k)
+        print(f"OCR: {len(has_text)} of {len(ocr)} images have readable text; excluded as targets")
 
     def solvable(t, ds):
         cand = [t] + ds
@@ -117,7 +131,7 @@ def main():
                 continue
             t = by_locale[loc].pop()
             progress = True
-            if t in used:
+            if t in used or keys[t] in has_text:
                 continue
             order = [j for j in np.argsort(-sim[t]) if sim[t, j] < args.dup_threshold and j != t]
             hard = [int(j) for j in order[:args.n_distractors]]
@@ -142,7 +156,8 @@ def main():
             break
 
     manifest = {
-        "version": "poc1_v1", "seed": args.seed, "model": MODEL_ID, "n_targets": len(targets),
+        "version": args.version, "exclude_text": args.exclude_text,
+        "ocr_min_conf": args.ocr_min_conf, "ocr_min_area": args.ocr_min_area, "seed": args.seed, "model": MODEL_ID, "n_targets": len(targets),
         "per_locale": args.per_locale, "dup_threshold": args.dup_threshold,
         "rejected_by_solvability_check": rejected,
         "note": "Targets kept only if SigLIP text->image retrieval with the English caption ranks them "
@@ -150,7 +165,7 @@ def main():
         "items": targets,
     }
     DERIVED.mkdir(parents=True, exist_ok=True)
-    with open(DERIVED / "manifest_poc1_v1.json", "w") as f:
+    with open(DERIVED / f"manifest_{args.version}.json", "w") as f:
         json.dump(manifest, f, indent=1)
 
     out = ANNOTATION_DIR / "xm3600_captioning"
@@ -166,7 +181,7 @@ def main():
 
     print(f"\nkept {len(targets)} targets from {len({t['locale'] for t in targets})} locales; rejected {rejected} by the solvability check")
     print(f"hard-tier max similarity: median {np.median([t['hard_max_sim'] for t in targets]):.3f}")
-    print(f"manifest: {DERIVED / 'manifest_poc1_v1.json'}")
+    print(f"manifest: {DERIVED / f'manifest_{args.version}.json'}")
     print(f"captioning folder: {out}")
 
 
