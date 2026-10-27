@@ -72,7 +72,7 @@ def test_image_ref_correct_guess_and_message_delivered():
 
     assert rec["finished"] is True
     assert rec["channel"] == "identity"
-    assert rec["score"] == {"guess": 2, "gold": 2, "correct": True}
+    assert rec["score"] == {"guess": 2, "gold": 2, "correct": True, "describer_words": 3, "over_word_limit": False}
     assert [(t.role, t.kind) for t in gm.turns] == [("describer", "message"), ("guesser", "answer")]
     assert gm.inbox["guesser"] == ["a red bus"]
     assert gm.observe("guesser").inbox == ["a red bus"]
