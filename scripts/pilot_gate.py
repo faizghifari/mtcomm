@@ -42,7 +42,8 @@ N_ITEMS = 20
 MAX_WAVES = 10
 ACTIVE = set(MODELS)  # models whose episodes are replayed and advanced
 RUN_DIR = OUTPUT_ROOT / "pilot_gate"  # overridden by --run
-OPTS = {"blend_items": None, "manifest": None, "max_words": None, "blocks": None}
+OPTS = {"blend_items": None, "manifest": None, "max_words": None, "blocks": None,
+        "prompt_style": "explicit", "min_questions": 0}
 # BLEnD ceiling: visitor language -> local culture whose items it uses
 BLEND_PAIRS = {"su": "South_Korea", "jv": "West_Java", "id": "South_Korea", "ko": "West_Java"}
 
@@ -75,7 +76,9 @@ def episodes():
             for block, maxq in [("D", 3), ("Dprior", 0)]:
                 yield (f"{block}|{vlang}|{it['item_id']}", block, vlang,
                        lambda gen, it=it, vlang=vlang, maxq=maxq: (
-                           BlendLocalVisitorGame(it, vlang, vlang, max_questions=maxq),
+                           BlendLocalVisitorGame(it, vlang, vlang, max_questions=maxq,
+                                                 min_questions=OPTS["min_questions"],
+                                                 prompt_style=OPTS["prompt_style"]),
                            {"visitor": LLMPlayer(gen("visitor"), ""), "local": LLMPlayer(gen("local"), "")}))
 
 
@@ -230,10 +233,14 @@ def main():
     ap.add_argument("--manifest", default=None, help="XM3600 manifest (default: v2, text-free)")
     ap.add_argument("--max-words", type=int, default=None, help="describer word limit (default: none)")
     ap.add_argument("--blocks", nargs="*", default=None, help="only these blocks (A B C D Dprior)")
+    ap.add_argument("--prompt-style", default="explicit", choices=["explicit", "neutral"],
+                    help="culture-game prompts (explicit = first pilots)")
+    ap.add_argument("--min-questions", type=int, default=0, help="culture game: messages required before answering")
     args = ap.parse_args()
     global RUN_DIR
     RUN_DIR = OUTPUT_ROOT / args.run
-    OPTS.update(blend_items=args.blend_items, manifest=args.manifest, max_words=args.max_words, blocks=args.blocks)
+    OPTS.update(blend_items=args.blend_items, manifest=args.manifest, max_words=args.max_words, blocks=args.blocks,
+                prompt_style=args.prompt_style, min_questions=args.min_questions)
     RUN_DIR.mkdir(parents=True, exist_ok=True)
     global ACTIVE
     ACTIVE = set(args.models)
