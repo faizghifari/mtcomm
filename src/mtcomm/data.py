@@ -43,8 +43,8 @@ LOCAL_PLACE = {
 
 # ---------------------------------------------------------------- image reference (XM3600)
 
-def _image_path(key: str) -> str:
-    return str(XM3600_IMAGES / f"{key}.jpg")
+def _image_path(key: str, image_dir=None, ext: str = ".jpg") -> str:
+    return str(Path(image_dir or XM3600_IMAGES) / f"{key}{ext}")
 
 
 @lru_cache(maxsize=None)
@@ -101,7 +101,10 @@ def load_image_items(tier: str, caption_langs=DEFAULT_CAPTION_LANGS, n_candidate
     xm = _xm3600_captions(xm_langs) if xm_langs else {}
     user = _user_captions(tuple(lang for lang in caption_langs if lang in USER_CAPTION_LANGS))
 
-    manifest = json.loads(Path(manifest_path or MANIFEST).read_text(encoding="utf-8"))["items"]
+    manifest_doc = json.loads(Path(manifest_path or MANIFEST).read_text(encoding="utf-8"))
+    manifest = manifest_doc["items"]
+    # Non-XM3600 sets (e.g. FoodX-251) name their image folder; they have no XM3600 captions.
+    image_dir, image_ext = manifest_doc.get("image_dir"), manifest_doc.get("image_ext", ".jpg")
     items = []
     for it in manifest:
         item_id, target_key = it["item_id"], it["image_key"]
@@ -124,8 +127,8 @@ def load_image_items(tier: str, caption_langs=DEFAULT_CAPTION_LANGS, n_candidate
             "item_id": item_id,
             "tier": tier,
             "locale": it["locale"],
-            "target": _image_path(target_key),
-            "candidates": [_image_path(k) for k in keys],
+            "target": _image_path(target_key, image_dir, image_ext),
+            "candidates": [_image_path(k, image_dir, image_ext) for k in keys],
             "gold": keys.index(target_key) + 1,
             "captions": captions,
         })

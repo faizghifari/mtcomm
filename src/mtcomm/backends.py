@@ -34,7 +34,9 @@ def load_env():
 def image_b64(path: str) -> str:
     """Base64 of the fixed downscaled JPEG copy of an image (created on first use)."""
     src = Path(path)
-    dst = IMAGE_CACHE / src.name
+    # Keyed by full path: generated sets reuse short names (e1.png, ...) across targets.
+    import hashlib
+    dst = IMAGE_CACHE / (hashlib.sha1(str(src.resolve()).encode()).hexdigest()[:16] + ".jpg")
     if not dst.exists():
         from PIL import Image
 
