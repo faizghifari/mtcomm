@@ -43,7 +43,7 @@ MAX_WAVES = 10
 ACTIVE = set(MODELS)  # models whose episodes are replayed and advanced
 RUN_DIR = OUTPUT_ROOT / "pilot_gate"  # overridden by --run
 OPTS = {"blend_items": None, "manifest": None, "max_words": None, "blocks": None,
-        "prompt_style": "explicit", "min_questions": 0}
+        "prompt_style": "explicit", "min_questions": 0, "image_questions": 3}
 # BLEnD ceiling: visitor language -> local culture whose items it uses
 BLEND_PAIRS = {"su": "South_Korea", "jv": "West_Java", "id": "South_Korea", "ko": "West_Java"}
 
@@ -57,8 +57,18 @@ def episodes():
                    lambda gen, it=it, lang=lang: (ImageRefGame(it, lang, lang, max_words=OPTS["max_words"]),
                                                   {"describer": LLMPlayer(gen("describer"), ""),
                                                    "guesser": LLMPlayer(gen("guesser"), "")}))
+    # Adlg: same as A, but the guesser may ask up to IMAGE_QUESTIONS questions before choosing.
+    for lang in ["en", "ko", "id", "su", "jv"]:
+        for it in images:
+            yield (f"Adlg|{lang}|{it['item_id']}", "Adlg", lang,
+                   lambda gen, it=it, lang=lang: (ImageRefGame(it, lang, lang, max_words=OPTS["max_words"],
+                                                               max_questions=OPTS["image_questions"]),
+                                                  {"describer": LLMPlayer(gen("describer"), ""),
+                                                   "guesser": LLMPlayer(gen("guesser"), "")}))
     for lang in ["en", "ko", "id"]:
         for it in images:
+            if not it["captions"].get(lang):
+                continue  # sets outside XM3600 (FoodX, edited) have no native captions
             yield (f"B|{lang}|{it['item_id']}", "B", lang,
                    lambda gen, it=it, lang=lang: (ImageRefGame(it, lang, lang, max_words=OPTS["max_words"]),
                                                   {"describer": ScriptedPlayer([Move("message", it["captions"][lang])]),
@@ -236,11 +246,13 @@ def main():
     ap.add_argument("--prompt-style", default="explicit", choices=["explicit", "neutral"],
                     help="culture-game prompts (explicit = first pilots)")
     ap.add_argument("--min-questions", type=int, default=0, help="culture game: messages required before answering")
+    ap.add_argument("--image-questions", type=int, default=3, help="image game Adlg block: guesser question budget")
     args = ap.parse_args()
     global RUN_DIR
     RUN_DIR = OUTPUT_ROOT / args.run
     OPTS.update(blend_items=args.blend_items, manifest=args.manifest, max_words=args.max_words, blocks=args.blocks,
-                prompt_style=args.prompt_style, min_questions=args.min_questions)
+                prompt_style=args.prompt_style, min_questions=args.min_questions,
+                image_questions=args.image_questions)
     RUN_DIR.mkdir(parents=True, exist_ok=True)
     global ACTIVE
     ACTIVE = set(args.models)
