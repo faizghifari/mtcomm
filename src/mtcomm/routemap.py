@@ -21,7 +21,9 @@ LANDMARKS = ["well", "big tree", "small tree", "red house", "blue house", "bridg
              "football field", "fence", "boat", "cave", "waterfall"]
 LEVELS = {
     "easy": {"n_landmarks": 9, "n_waypoints": 5, "n_missing": 0, "n_extra": 0, "dup_types": 0},
-    "hard": {"n_landmarks": 14, "n_waypoints": 9, "n_missing": 2, "n_extra": 1, "dup_types": 2},
+    # v2 (2026-10-28): v1 hard (14 landmarks, 9 steps, 2 hidden) failed even at the same-language ceiling
+    # (1/45): followers named landmarks off the route on the crowded map and skipped hidden waypoints.
+    "hard": {"n_landmarks": 11, "n_waypoints": 7, "n_missing": 1, "n_extra": 1, "dup_types": 2},
 }
 
 

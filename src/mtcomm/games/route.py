@@ -5,7 +5,7 @@ label}}, the native-checked lexicon), giver_image / follower_image ({lang: path}
 language's labels), directions ({lang: {"left": ..., "right": ...}}).
 
 The giver sees the route and no grid; the follower sees a lettered grid and no route, and on hard maps
-its map differs (two route landmarks hidden, one extra). Both are told the maps may differ. Turns
+its map differs (route landmarks hidden, one extra; mtcomm.routemap.LEVELS). Both are told the maps may differ. Turns
 alternate: the giver tells the route a step or two at a time; after each message the follower replies
 (confirms where it is, or asks, e.g. where a landmark it does not have is). The giver has
 n_steps + extra_messages messages; the follower may answer once the giver has sent half of n_steps.
@@ -112,8 +112,8 @@ class RouteGame(GameMaster):
                 f"You and your partner each have a map of the same village, but the maps may not be identical. "
                 f"Yours shows a route in red, starting at the green square and ending at the red dot; your "
                 f"partner's map has no route. Guide your partner along the route by talking, in {name}, the way "
-                f"you would guide a friend over the phone: say where to go and which side of each landmark to "
-                f"pass. Give one or two steps per message, then wait for your partner's reply, and answer their "
+                f"you would guide a friend over the phone: say where to go and whether each landmark is on the "
+                f"walker's left or right when passing it. Give one or two steps per message, then wait for your partner's reply, and answer their "
                 f"questions. Rules: ordinary sentences only, at most {self.max_words} words per message, at most "
                 f"{self.max_landmarks} landmarks named per message; no lists, arrows, numbering, coordinates or "
                 f"measurements. You have {left} message(s) left. Write only in {name}.",
@@ -125,7 +125,8 @@ class RouteGame(GameMaster):
         dirs = self.item["directions"][self.roles[role]]
         talk = (f"Your partner sees the route and is guiding you along it, in {name}. Reply after each message: "
                 f"say where you are on your map, or ask a question (for example, where a landmark is that you do "
-                f"not have). The maps may not be identical. " if self.allow_message else
+                f"not have). The maps may not be identical: if your partner names a landmark your map does not have, "
+                f"ask where it is and give that step as the grid cell where it stands. " if self.allow_message else
                 "Nobody can tell you the route; guess it. ")
         when = ("" if not self.allow_message else
                 " Your partner has no messages left: give your answer now." if not can_msg else
@@ -135,8 +136,8 @@ class RouteGame(GameMaster):
             role, self.roles[role],
             f"You have a map of a village with a lettered grid (columns A-H, rows 1-8) and a green square where "
             f"a route starts. {talk}Your answer is the route as steps in order, one per line: the landmark the "
-            f"route passes, written exactly as on your map, then the side it passes on ({dirs['left']} or "
-            f"{dirs['right']}), e.g. \"<landmark>, {dirs['left']}\"; or, for a place where your map has no "
+            f"route passes, written exactly as on your map, then which side the landmark is on as you walk past it ({dirs['left']} "
+            f"or {dirs['right']}), e.g. \"<landmark>, {dirs['left']}\"; or, for a place where your map has no "
             f"landmark, the grid cell, e.g. \"cell D7\".{when}",
             images=[self.item["follower_image"][self.roles[role]]], inbox=list(self.inbox[role]),
             can_message=can_msg and self.allow_message, can_answer=can_answer)

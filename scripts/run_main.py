@@ -158,7 +158,8 @@ def episodes(opts):
         items = load_route_items(langs=sorted({x for p in pairs for x in p}))
         easy = [it for it in items if it["map"]["level"] == "easy"]
         hard = [it for it in items if it["map"]["level"] == "hard"]
-        items = easy[:(n + 1) // 2] + hard[:n // 2]  # half easy, half hard
+        level = opts.get("route_level", "both")  # half easy, half hard; "hard" re-runs only the hard half
+        items = (easy[:(n + 1) // 2] if level != "hard" else []) + (hard[:n // 2] if level != "easy" else [])
         for a, b in pairs:
             for it in items:
                 for cond in conditions(a, b) + ["ceiling", "prior"]:
@@ -411,9 +412,11 @@ def main():
     ap.add_argument("--workers", type=int, default=12)
     ap.add_argument("--loop", action="store_true")
     ap.add_argument("--interval", type=int, default=120)
+    ap.add_argument("--route-level", default="both", choices=["both", "easy", "hard"])
     args = ap.parse_args()
     pairs = [tuple(p.split("-")) for p in args.pairs] if args.pairs else PAIRS
-    opts = {"run_dir": OUTPUT_ROOT / args.run, "tasks": args.tasks, "pairs": pairs, "n": args.n}
+    opts = {"run_dir": OUTPUT_ROOT / args.run, "tasks": args.tasks, "pairs": pairs, "n": args.n,
+            "route_level": args.route_level}
     opts["run_dir"].mkdir(parents=True, exist_ok=True)
     backend = make_backend(PLAYER)
     if args.cmd == "plan":
@@ -422,7 +425,7 @@ def main():
         return cmd_report(opts)
     with open(opts["run_dir"] / "config.json", "w") as f:
         json.dump({"player": backend.config(), "tasks": args.tasks, "pairs": pairs, "n": args.n,
-                   "translators": TRANSLATORS, "pivots": PIVOTS}, f, indent=1, default=str)
+                   "route_level": args.route_level, "translators": TRANSLATORS, "pivots": PIVOTS}, f, indent=1, default=str)
     cache = ReplayCache(opts["run_dir"] / "cache.jsonl")
     if args.cmd == "batch":
         return cmd_batch(opts, backend, cache, args.loop, args.interval)
