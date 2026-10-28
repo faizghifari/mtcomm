@@ -47,10 +47,13 @@ class _QAGame(GameMaster):
     max_questions = 20
 
     def __init__(self, item: dict, questioner_lang: str, answerer_lang: str, allow_message: bool = True,
-                 given_words: bool = False):
+                 given_words: bool = False, original: bool = False):
         super().__init__(item, {"questioner": questioner_lang, "answerer": answerer_lang})
         self.allow_message = allow_message
         self.words = ANSWER_WORDS.get(answerer_lang) if given_words else None
+        # original=True: MuG-Eval's released MCQ prompts verbatim (the answerer replies "Yes."/"No."/"Maybe." in
+        # English), for screening whether a model can play the task at all in its own language (no translation).
+        self.original = original
 
     def _answer_choice(self, name):
         if self.words:
@@ -67,7 +70,7 @@ class _QAGame(GameMaster):
         """An answerer must reply in its own language; small local players fall back to English "Maybe."
         (one-word replies are too short for GlotLID, so the English words are checked directly)."""
         code = self.roles[role]
-        if role == "answerer" and code != "en" and re.sub(r"[^a-z]", "", text.lower()) in ("yes", "no", "maybe"):
+        if role == "answerer" and code != "en" and not self.original and re.sub(r"[^a-z]", "", text.lower()) in ("yes", "no", "maybe"):
             return f"You replied in English. Reply in {lang(code).name} with {self._answer_choice(lang(code).name)}."
         return None
 
@@ -137,6 +140,18 @@ class MCQConversationGame(_QAGame):
     max_questions = 4  # MuG-Eval's released prompt: exactly 4 questions, one per choice
 
     def observe(self, role):
+        if role == "answerer" and self.original:  # mcqa_prompt_chat_eng_a.md
+            q = self.inbox[role][-1] if self.inbox[role] else ""
+            return Observation(
+                role, self.roles[role],
+                "Answer the following question based solely on the information contained in the passage. Do not use "
+                "any external knowledge or make assumptions beyond what is explicitly stated in the text. Your response "
+                'must be in English and limited to exactly one of these three answers: "Yes.", "No.", or "Maybe." '
+                "(including the period). Do not provide any explanation or additional words. If the query contains two "
+                'or more questions asked simultaneously, consider it invalid and respond with "Maybe."\n\n'
+                f"<|Passage|>\n{self.item['passage_a']}\n\n<|Language|>\n{lang(self.roles['questioner']).name}\n\n"
+                f"<|Question|>\n{q}\n\n<|Options|>\n\n- Yes.\n- No.\n- Maybe.",
+                can_message=True, can_answer=False)
         if role == "answerer":
             name = lang(self.roles[role]).name
             q = self.inbox[role][-1] if self.inbox[role] else ""
@@ -151,9 +166,13 @@ class MCQConversationGame(_QAGame):
                 can_message=True, can_answer=False)
         name = lang(self.roles[role]).name
         choices = "\n".join(f"({i}) {c}" for i, c in enumerate(self.item["options_q"], 1))
-        intro = (f"You will be solving a multiple-choice question by asking questions about a hidden passage. A "
-                 f"person has this passage; you can ask them questions about its content, and they will respond with "
-                 f"only \"yes,\" \"no,\" or \"maybe.\"\n\nYour questions must be in {name} and you can only ask one "
+        person = ("I am serving as an intermediary between you and a person who has this passage. You can ask me "
+                  "questions about the passage content, and I will relay these to the person. They will respond with "
+                  "only \"yes,\" \"no,\" or \"maybe,\" which I will then share with you." if self.original else
+                  "A person has this passage; you can ask them questions about its content, and they will respond with "
+                  "only \"yes,\" \"no,\" or \"maybe.\"")  # original: mcqa_prompt_chat_eng_q.md
+        intro = (f"You will be solving a multiple-choice question by asking questions about a hidden passage. "
+                 f"{person}\n\nYour questions must be in {name} and you can only ask one "
                  f"question at a time. Do not ask for hints or request the passage directly. Among the four answer "
                  f"choices provided, exactly one is correct. You must ask exactly {self.max_questions} questions (one "
                  f"corresponding to each answer choice) before making your final decision. After receiving all four "
