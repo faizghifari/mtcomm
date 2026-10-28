@@ -154,8 +154,9 @@ def episodes(opts):
                                         ["narrator", "arranger"]))
     if "route" in tasks:
         items = load_route_items(langs=sorted({x for p in pairs for x in p}))
-        items = [it for lv in ("easy", "hard") for it in items if it["map"]["level"] == lv][:n] if n < len(items) \
-            else items
+        easy = [it for it in items if it["map"]["level"] == "easy"]
+        hard = [it for it in items if it["map"]["level"] == "hard"]
+        items = easy[:(n + 1) // 2] + hard[:n // 2]  # half easy, half hard
         for a, b in pairs:
             for it in items:
                 for cond in conditions(a, b) + ["ceiling", "prior"]:
