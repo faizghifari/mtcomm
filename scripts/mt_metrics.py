@@ -27,7 +27,7 @@ from mtcomm.paths import OUTPUT_ROOT
 
 OUT = OUTPUT_ROOT / "metrics"
 TRANSLATED = {"sol", "flash-lite", "nllb", "google", "nllb-id", "google-id"}
-MODELS = ["cometkiwi", "xcomet"]
+MODELS = ["cometkiwi", "xcomet"]  # xcomet needs more RAM than this machine has (see comet_score.py)
 
 
 def _seg_id(src, mt, a, b):
@@ -196,7 +196,7 @@ def main():
     ap.add_argument("--loop", action="store_true")
     ap.add_argument("--runs", nargs="*", default=["main_image", "main_mcq"])
     ap.add_argument("--batch-size", type=int, default=16)
-    ap.add_argument("--models", nargs="*", default=MODELS)
+    ap.add_argument("--models", nargs="*", default=["cometkiwi"])
     args = ap.parse_args()
     if args.cmd == "export":
         export(args.runs)

@@ -4,7 +4,9 @@ Mirrors mt-eval's research/mt_compare/compute_comet.py run_model (same checkpoin
 error-span counts), which cannot run in mt-eval's own env at the moment (setuptools 82 has no
 pkg_resources). Standalone on purpose: it imports nothing from mtcomm.
 
-Usage: .venv-metrics/bin/python scripts/comet_score.py IN.jsonl OUT.jsonl --models cometkiwi xcomet
+XCOMET-XL (3.5B, fp32) does not load on this 23 GB-RAM machine (killed while loading); CometKiwi does.
+
+Usage: .venv-metrics/bin/python scripts/comet_score.py IN.jsonl OUT.jsonl --models cometkiwi [xcomet]
   IN rows: {"record_id", "source_text", "post_edit"}; OUT rows: {"record_id", "<model>_score", ...}
 """
 
@@ -47,10 +49,10 @@ def main():
             res[i][f"{name}_score"] = s
             if spans is not None:
                 res[i][f"{name}_n_error_spans"] = spans[i]
-    with open(args.out, "w", encoding="utf-8") as f:
-        for r in res:
-            f.write(json.dumps(r) + "\n")
-    print(f"scored {len(rows)} segments with {args.models} -> {args.out}")
+        with open(args.out, "w", encoding="utf-8") as f:  # after each model, so a later crash keeps it
+            for r in res:
+                f.write(json.dumps(r) + "\n")
+        print(f"scored {len(rows)} segments with {name} -> {args.out}", flush=True)
 
 
 if __name__ == "__main__":
