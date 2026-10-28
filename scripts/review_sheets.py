@@ -16,6 +16,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font
 from PIL import Image, ImageDraw
 
+from mtcomm.data import SEQUENCE_MANIFEST
 from mtcomm.paths import DATA_ROOT, OUTPUT_ROOT
 
 OUT = DATA_ROOT / "annotation" / "review"
@@ -71,7 +72,7 @@ def _workbook(path, header, rows, instructions):
 
 
 def sequences():
-    m = json.load(open(DATA_ROOT / "derived" / "bloom_vist" / "manifest_seq_v1.json"))
+    m = json.load(open(SEQUENCE_MANIFEST))  # the screened set (v2) once it exists
     img = DATA_ROOT / "derived" / "bloom_vist" / "images"
     stories = m["stories"]
     for page in range(0, len(stories), 10):
