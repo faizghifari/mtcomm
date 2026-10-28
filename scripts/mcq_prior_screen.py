@@ -4,12 +4,18 @@ The questioner sees the question and options but never the passage. Items it ans
 alone (Gemini often guesses Belebele from the options) say nothing about communication, so the
 main runs keep items the prior gets wrong in every questioner language (su, jv, ko).
 
-Usage: python scripts/mcq_prior_screen.py [--pool 300] [--keep 30] [--loop]
+v2 adds a passage check: v1's items gave a same-language ceiling of only 40-50%, because picking
+what the prior gets wrong also picked items that are tricky even with the passage (negations,
+ambiguous options). v2 keeps items the prior gets wrong AND a reader given the passage gets right,
+in every language, so the passage really fills the gap.
+
+Usage: python scripts/mcq_prior_screen.py [--pool 600] [--keep 30] [--loop]
   Re-run until it prints the selection (submit, poll, ingest are resumable).
 """
 
 import argparse
 import json
+import re
 import time
 
 from mtcomm.backends import make_backend
@@ -22,7 +28,8 @@ from mtcomm.replay import BatchGenerate, Pending, ReplayCache
 PLAYER = "gemini-3.8-flash"
 LANGS = ["su", "jv", "ko"]
 RUN_DIR = OUTPUT_ROOT / "mcq_screen"
-OUT = DATA_ROOT / "derived" / "mcq" / "mcq_screen_v1.json"
+OUT = DATA_ROOT / "derived" / "mcq" / "mcq_screen_v2.json"
+DIGIT = re.compile(r"\[\[\s*([1-4])\s*\]\]|\b([1-4])\b")
 
 
 def prior_answers(pool, backend, cache, pending):
@@ -41,9 +48,29 @@ def prior_answers(pool, backend, cache, pending):
     return out
 
 
+def passage_answers(item_ids, pool, backend, cache, pending):
+    """{item_id: {lang: correct or None}}: a reader answers with the passage in front of it."""
+    out = {}
+    for la in LANGS:
+        for it in load_mcq_items(la, la, n=pool):
+            if it["item_id"] not in item_ids:
+                continue
+            opts = "\n".join(f"({i}) {o}" for i, o in enumerate(it["options_q"], 1))
+            prompt = (f"Read the passage and answer the multiple-choice question.\n\nPassage:\n{it['passage_a']}\n\n"
+                      f"Question: {it['question_q']}\n{opts}\n\nAnswer with only the number in double brackets, "
+                      f"e.g. [[2]].")
+            gen = BatchGenerate(backend, cache, f"passage|{la}|{it['item_id']}", "reader", pending)
+            try:
+                m = DIGIT.search(gen(prompt, None, []))
+                out.setdefault(it["item_id"], {})[la] = bool(m) and int(m.group(1) or m.group(2)) == it["gold"]
+            except Pending:
+                out.setdefault(it["item_id"], {})[la] = None
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--pool", type=int, default=300)
+    ap.add_argument("--pool", type=int, default=600)
     ap.add_argument("--keep", type=int, default=30)
     ap.add_argument("--loop", action="store_true")
     args = ap.parse_args()
@@ -72,6 +99,8 @@ def main():
             json.dump(state, open(state_p, "w"))
         pending = {}
         answers = prior_answers(args.pool, backend, cache, pending)
+        wrong = {i for i, a in answers.items() if all(v is False for v in a.values())}
+        readable = passage_answers(wrong, args.pool, backend, cache, pending) if not pending else {}
         if pending:
             state["job"] = backend.submit([(k, v["request"]) for k, v in pending.items()], RUN_DIR)
             state["sent"] = {k: {"request_hash": v["request_hash"], "attempts": v["attempts"]} for k, v in pending.items()}
@@ -82,16 +111,16 @@ def main():
             continue
         break
     acc = {la: sum(a[la] for a in answers.values()) / len(answers) for la in LANGS}
-    # Pool order is the seeded Belebele sample order; prefer items wrong in all three languages.
-    ranked = sorted(answers, key=lambda i: sum(answers[i][la] for la in LANGS))
-    keep = [i for i in ranked if sum(answers[i][la] for la in LANGS) == 0][:args.keep]
-    if len(keep) < args.keep:  # top up with items wrong in two of the three languages
-        keep += [i for i in ranked if sum(answers[i][la] for la in LANGS) == 1][:args.keep - len(keep)]
+    ok = [i for i in answers if i in wrong and all(readable.get(i, {}).get(la) for la in LANGS)]
+    keep = ok[:args.keep]
     OUT.parent.mkdir(parents=True, exist_ok=True)
-    json.dump({"version": 1, "player": PLAYER, "pool": args.pool, "prior_accuracy_on_pool": acc,
-               "n_wrong_all_langs": sum(1 for a in answers.values() if not any(a.values())),
+    json.dump({"version": 2, "player": PLAYER, "pool": args.pool, "prior_accuracy_on_pool": acc,
+               "n_wrong_all_langs": len(wrong), "n_wrong_and_passage_right": len(ok),
+               "passage_accuracy_on_wrong": {la: sum(bool(readable[i][la]) for i in wrong) / max(1, len(wrong))
+                                             for la in LANGS},
                "item_ids": keep, "prior": {i: answers[i] for i in keep}}, open(OUT, "w"), indent=1)
-    print(f"prior accuracy on the pool: {acc}; kept {len(keep)} -> {OUT}")
+    print(f"prior accuracy {acc}; wrong in all languages {len(wrong)}; of those right with the passage in all "
+          f"languages {len(ok)}; kept {len(keep)} -> {OUT}")
 
 
 if __name__ == "__main__":

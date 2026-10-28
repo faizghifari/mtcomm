@@ -103,7 +103,9 @@ def conditions(a, b):
     return conds
 
 
-MCQ_SCREEN = DATA_ROOT / "derived" / "mcq" / "mcq_screen_v1.json"
+# v2 (prior wrong and passage right, in su/jv/ko) once built; v1 (prior wrong only) was used by run main_mcq.
+MCQ_SCREEN = next((p for p in (DATA_ROOT / "derived" / "mcq" / f"mcq_screen_v{v}.json" for v in (2, 1)) if p.exists()),
+                  DATA_ROOT / "derived" / "mcq" / "mcq_screen_v1.json")
 
 
 def task_items(task, load, a, b, n):
