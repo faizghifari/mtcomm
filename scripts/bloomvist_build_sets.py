@@ -154,6 +154,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--n", type=int, default=30)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--out-name", default="manifest_seq_v1.json", help="manifest file name (images are shared)")
     args = ap.parse_args()
 
     d = json.load(open(SRC, encoding="utf-8"))
@@ -257,7 +258,7 @@ def main():
         "seed": args.seed,
         "stories": kept,
     }
-    json.dump(manifest, open(OUT / "manifest_seq_v1.json", "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+    json.dump(manifest, open(OUT / args.out_name, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
 
     print(f"\ntried {tried}, kept {len(kept)}")
     print(f"rejections: {dict(reasons)}")
@@ -270,7 +271,7 @@ def main():
     print(f"kept tiers: {dict(Counter(tier(set(r['text_langs'])) for r in kept))}")
     if len(kept) < args.n:
         print(f"WARNING: only {len(kept)} of {args.n} sequences passed the filters")
-    print(f"wrote {len(kept)} sequences to {OUT / 'manifest_seq_v1.json'}")
+    print(f"wrote {len(kept)} sequences to {OUT / args.out_name}")
 
 
 if __name__ == "__main__":

@@ -276,7 +276,10 @@ if __name__ == "__main__":
 
 # ---------------------------------------------------------------- sequence ordering (Bloom-VIST)
 
-SEQUENCE_MANIFEST = DATA_ROOT / "derived" / "bloom_vist" / "manifest_seq_v1.json"
+# v2 = stories the no-talk prior cannot put in order (scripts/sequence_prior_screen.py); v1 = first 30 built.
+SEQUENCE_MANIFEST_V1 = DATA_ROOT / "derived" / "bloom_vist" / "manifest_seq_v1.json"
+SEQUENCE_MANIFEST_V2 = DATA_ROOT / "derived" / "bloom_vist" / "manifest_seq_v2.json"
+SEQUENCE_MANIFEST = SEQUENCE_MANIFEST_V2 if SEQUENCE_MANIFEST_V2.exists() else SEQUENCE_MANIFEST_V1
 
 
 def load_sequence_items(seed: int = 0, manifest_path=None) -> List[dict]:
