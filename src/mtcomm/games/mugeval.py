@@ -35,17 +35,41 @@ def _final(text: str) -> Optional[str]:
     return text.strip() or None if text else None
 
 
+# The answerer's three replies, given in the prompt when the game is built with given_words=True: small local
+# players otherwise answer in English even after a rewrite. [su/jv words: native check pending]
+ANSWER_WORDS = {"su": ("Muhun.", "Henteu.", "Panginten."), "jv": ("Iya.", "Ora.", "Mbokmenawa."),
+                "id": ("Ya.", "Tidak.", "Mungkin."), "ko": ("네.", "아니요.", "아마도.")}
+
+
 class _QAGame(GameMaster):
     """Questioner asks, answerer replies, until the questioner gives a [[final]] answer or runs out."""
 
     max_questions = 20
 
-    def __init__(self, item: dict, questioner_lang: str, answerer_lang: str, allow_message: bool = True):
+    def __init__(self, item: dict, questioner_lang: str, answerer_lang: str, allow_message: bool = True,
+                 given_words: bool = False):
         super().__init__(item, {"questioner": questioner_lang, "answerer": answerer_lang})
         self.allow_message = allow_message
+        self.words = ANSWER_WORDS.get(answerer_lang) if given_words else None
+
+    def _answer_choice(self, name):
+        if self.words:
+            return f'exactly one of these three answers: "{self.words[0]}" (yes), "{self.words[1]}" (no), or "{self.words[2]}" (maybe).'
+        return f'exactly one of these three answers: the {name} words for "Yes.", "No.", or "Maybe."'
+
+    def _maybe(self, name):
+        return f'"{self.words[2]}"' if self.words else '"Maybe."'
 
     def _asked(self):
         return sum(1 for t in self.turns if t.role == "questioner" and t.kind == "message")
+
+    def validate(self, role, text):
+        """An answerer must reply in its own language; small local players fall back to English "Maybe."
+        (one-word replies are too short for GlotLID, so the English words are checked directly)."""
+        code = self.roles[role]
+        if role == "answerer" and code != "en" and re.sub(r"[^a-z]", "", text.lower()) in ("yes", "no", "maybe"):
+            return f"You replied in English. Reply in {lang(code).name} with {self._answer_choice(lang(code).name)}."
+        return None
 
     def next_role(self):
         last = self.turns[-1] if self.turns else None
@@ -120,9 +144,9 @@ class MCQConversationGame(_QAGame):
                 role, self.roles[role],
                 "Answer the following question based solely on the information contained in the passage. Do not use "
                 "any external knowledge or make assumptions beyond what is explicitly stated in the text. Your response "
-                f'must be in {name} and limited to exactly one of these three answers: the {name} words for "Yes.", '
-                '"No.", or "Maybe." Do not provide any explanation or additional words. If the query contains two or '
-                'more questions asked simultaneously, consider it invalid and respond with "Maybe."\n\n'
+                f"must be in {name} and limited to {self._answer_choice(name)} Do not provide any explanation or "
+                "additional words. If the query contains two or more questions asked simultaneously, consider it "
+                f"invalid and respond with {self._maybe(name)}\n\n"
                 f"<|Passage|>\n{self.item['passage_a']}\n\n<|Language|>\n{name}\n\n<|Question|>\n{q}",
                 can_message=True, can_answer=False)
         name = lang(self.roles[role]).name

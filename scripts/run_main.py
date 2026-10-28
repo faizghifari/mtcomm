@@ -47,6 +47,8 @@ from mtcomm.players import LLMPlayer
 from mtcomm.replay import BatchGenerate, CachedChannel, CallFailed, Pending, ReplayCache, SyncGenerate
 
 PLAYER = "gemini-3.8-flash"
+# --players su=local:<id> ko=local:<id>: a model per player language (local LM Studio models); others use PLAYER.
+PLAYERS = {}
 PERTURB_MANIFEST = DATA_ROOT / "derived" / "perturb" / "full60" / "manifest_perturb_full60.json"
 TASKS = ["image", "mcq", "twentyq", "culture", "sequence", "sequence_step", "route"]
 # (a, b): image describer=a, guesser=b; sequence narrator=a, arranger=b; route giver=a, follower=b;
@@ -106,6 +108,7 @@ def conditions(a, b):
 # Passthrough: each player keeps its own language but messages arrive untranslated. Success there means the
 # receiver partly reads the sender's language, so translated scores on that pair overstate what MT adds.
 ONLY_CONDS = None  # --conds; None = every condition except passthrough
+GIVEN_WORDS = False  # --answer-words: the MCQ answerer is given its yes/no/maybe words (small local players)
 
 
 def all_conds(a, b):
@@ -188,7 +191,8 @@ def episodes(opts):
                 for it in task_items(task, load, a, lb, n):
                     yield from emit(task, f"{a}-{b}", cond, a, it["item_id"],
                                     lambda it=it, a=a, lb=lb, cond=cond, Game=Game: (
-                                        Game(it, a, lb, allow_message=cond != "prior"),
+                                        Game(it, a, lb, allow_message=cond != "prior",
+                                             **({"given_words": True} if GIVEN_WORDS else {})),
                                         ["questioner", "answerer"]))
     if "culture" in tasks:
         blend = load_blend_items()
@@ -215,22 +219,25 @@ def build(ep, make_gen):
     opening request is the same in every condition. Later roles' first calls depend on the channel."""
     gm, roles = ep["build"]()
     opener = gm.next_role()
-    return gm, {role: LLMPlayer(make_gen(role, share_first=(role == opener)), PLAYER) for role in roles}
+    return gm, {role: LLMPlayer(make_gen(role, gm.roles[role], share_first=(role == opener)),
+                                PLAYERS.get(gm.roles[role], PLAYER)) for role in roles}
 
 
-def run_one(ep, backend, cache, chans, mode, pending=None):
+def run_one(ep, backends, cache, chans, mode, pending=None):
+    """`backends` maps a model name to its backend; each role uses the model of its language."""
+    be = lambda code: backends[PLAYERS.get(code, PLAYER)]  # noqa: E731
     if mode == "batch":
-        make_gen = lambda role, share_first=False: BatchGenerate(  # noqa: E731
-            backend, cache, ep["id"], role, pending, share_first=share_first)
+        make_gen = lambda role, code, share_first=False: BatchGenerate(  # noqa: E731
+            be(code), cache, ep["id"], role, pending, share_first=share_first)
     else:
-        make_gen = lambda role, share_first=False: SyncGenerate(  # noqa: E731
-            backend, cache, ep["id"], role, share_first=share_first)
+        make_gen = lambda role, code, share_first=False: SyncGenerate(  # noqa: E731
+            be(code), cache, ep["id"], role, share_first=share_first)
     gm, players = build(ep, make_gen)
     # In the batch phase an uncached translation is left for `dialogue` (translators are synchronous).
     channel = CachedChannel(chans.get(ep["cond"]), cache, ep["id"], offline=(mode == "batch"))
     rec = run_episode(gm, players, channel, lid=lid.check, max_moves=50)
     rec.update(episode=ep["id"], task=ep["task"], pair=ep["pair"], cond=ep["cond"], eval_lang=ep["eval_lang"],
-               model=PLAYER, status="done")
+               model={r: PLAYERS.get(c, PLAYER) for r, c in gm.roles.items()} if PLAYERS else PLAYER, status="done")
     return rec
 
 
@@ -245,7 +252,7 @@ def cmd_plan(opts, backend):
     cache = ReplayCache(opts["run_dir"] / "plan_null.jsonl")
     for ep in eps:
         try:
-            run_one(ep, backend, cache, Channels(), "batch", pending)
+            run_one(ep, {PLAYER: backend}, cache, Channels(), "batch", pending)
         except Pending:
             pass
     first = {k for k in pending if "|first|" in k}
@@ -288,7 +295,7 @@ def cmd_batch(opts, backend, cache, loop, interval):
         chans = Channels()
         for ep in episodes(opts):
             try:
-                run_one(ep, backend, cache, chans, "batch", pending)
+                run_one(ep, {PLAYER: backend}, cache, chans, "batch", pending)
             except (Pending, CallFailed):
                 pass
             except Exception:  # a translator failing on an opening message is retried in `dialogue`
@@ -310,12 +317,12 @@ def cmd_batch(opts, backend, cache, loop, interval):
             return
 
 
-def cmd_dialogue(opts, backend, cache, workers):
+def cmd_dialogue(opts, backends, cache, workers):
     eps = list(episodes(opts))
     chans = Channels()
     records, errors = [], 0
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        futs = {pool.submit(run_one, ep, backend, cache, chans, "sync"): ep for ep in eps}
+        futs = {pool.submit(run_one, ep, backends, cache, chans, "sync"): ep for ep in eps}
         for i, fut in enumerate(as_completed(futs), 1):
             ep = futs[fut]
             try:
@@ -323,7 +330,7 @@ def cmd_dialogue(opts, backend, cache, workers):
             except Exception as e:
                 errors += 1
                 records.append({"episode": ep["id"], "task": ep["task"], "pair": ep["pair"], "cond": ep["cond"],
-                                "eval_lang": ep["eval_lang"], "model": PLAYER, "status": "error",
+                                "eval_lang": ep["eval_lang"], "model": PLAYERS or PLAYER, "status": "error",
                                 "error": f"{type(e).__name__}: {e}"[:400],
                                 "trace": traceback.format_exc()[-1500:]})
             if i % 25 == 0 or i == len(eps):
@@ -340,6 +347,8 @@ def _tokens(usage):
         return 0, 0
     if "promptTokenCount" in usage:
         return usage.get("promptTokenCount", 0), usage.get("candidatesTokenCount", 0) + usage.get("thoughtsTokenCount", 0)
+    if "prompt_tokens" in usage:  # chat completions (local models)
+        return usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0)
     return usage.get("input_tokens", 0), usage.get("output_tokens", 0)
 
 
@@ -366,7 +375,7 @@ def cost(opts):
                     t[0], t[1], t[2] = t[0] + i, t[1] + o, t[2] + 1
             elif r.get("usage"):
                 i, o = _tokens(r["usage"])
-                pi, po = PRICES[r["model"]]
+                pi, po = PRICES.get(r["model"], (0, 0))  # local models are free
                 half = 0.5 if r.get("mode") == "batch" else 1.0
                 lab = f"player {r['model']} ({r.get('mode', 'batch')})"
                 spend[lab] += half * (i * pi + o * po) / 1e6
@@ -424,25 +433,32 @@ def main():
     ap.add_argument("--interval", type=int, default=120)
     ap.add_argument("--route-level", default="both", choices=["both", "easy", "hard"])
     ap.add_argument("--conds", nargs="*", default=None, help="only these conditions (e.g. passthrough)")
+    ap.add_argument("--players", nargs="*", default=[], help="per-language models, e.g. ko=local:exaone-3.5-7.8b-instruct")
+    ap.add_argument("--answer-words", action="store_true", help="give the MCQ answerer its yes/no/maybe words")
     args = ap.parse_args()
-    global ONLY_CONDS
-    ONLY_CONDS = args.conds
+    global ONLY_CONDS, GIVEN_WORDS
+    ONLY_CONDS, GIVEN_WORDS = args.conds, args.answer_words
+    PLAYERS.update(p.split("=", 1) for p in args.players)
     pairs = [tuple(p.split("-")) for p in args.pairs] if args.pairs else PAIRS
     opts = {"run_dir": OUTPUT_ROOT / args.run, "tasks": args.tasks, "pairs": pairs, "n": args.n,
             "route_level": args.route_level}
     opts["run_dir"].mkdir(parents=True, exist_ok=True)
-    backend = make_backend(PLAYER)
+    backends = {m: make_backend(m) for m in {PLAYER, *PLAYERS.values()}}
+    backend = backends[PLAYER]
+    if PLAYERS and args.cmd in ("plan", "batch"):
+        raise SystemExit("--players (local models) runs `dialogue` directly; plan and batch are for the API player")
     if args.cmd == "plan":
         return cmd_plan(opts, backend)
     if args.cmd == "report":
         return cmd_report(opts)
     with open(opts["run_dir"] / "config.json", "w") as f:
-        json.dump({"player": backend.config(), "tasks": args.tasks, "pairs": pairs, "n": args.n,
+        json.dump({"player": backend.config(), "players": {c: backends[m].config() for c, m in PLAYERS.items()},
+                   "tasks": args.tasks, "pairs": pairs, "n": args.n,
                    "route_level": args.route_level, "translators": TRANSLATORS, "pivots": PIVOTS}, f, indent=1, default=str)
     cache = ReplayCache(opts["run_dir"] / "cache.jsonl")
     if args.cmd == "batch":
         return cmd_batch(opts, backend, cache, args.loop, args.interval)
-    return cmd_dialogue(opts, backend, cache, args.workers)
+    return cmd_dialogue(opts, backends, cache, args.workers)
 
 
 if __name__ == "__main__":

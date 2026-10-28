@@ -252,8 +252,16 @@ def test_mcq_wrong_choice_is_incorrect(mcq_item):
     gm = MCQConversationGame(item, "en", "id")
     rec = _run(gm,
                [Move("message", f"Question {i}?") for i in range(1, 5)] + [Move("answer", f"[[{wrong}]]")],
-               [Move("message", "Maybe") for _ in range(4)])
+               [Move("message", "Mungkin") for _ in range(4)])
 
     assert rec["score"]["guess"] == wrong
     assert rec["score"]["correct"] is False
     assert rec["score"]["questions_asked"] == 4
+
+
+def test_mcq_english_reply_is_rewritten(mcq_item):
+    gm = MCQConversationGame(mcq_item, "en", "id")
+    rec = _run(gm, [Move("message", f"Question {i}?") for i in range(1, 5)] + [Move("answer", "[[1]]")],
+               [Move("message", "Maybe."), Move("message", "Mungkin.")] + [Move("message", "Ya") for _ in range(3)])
+    first = rec["turns"][1]
+    assert first["source"] == "Mungkin." and first["rejected"][0]["text"] == "Maybe."

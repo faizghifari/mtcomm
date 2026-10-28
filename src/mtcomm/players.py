@@ -40,6 +40,11 @@ def parse_action(text: str, obs: Observation) -> Move:
         try:
             obj = json.loads(match.group(0))
             kind = obj.get("action")
+            # Small local players bend the format: {"action": "ans", "content": ...}, or the reply itself
+            # as the action ({"action": "panginten"}). Recover the content rather than send the raw JSON.
+            if isinstance(kind, str) and kind not in ("message", "answer"):
+                content = obj.get("content") or (kind if kind.lower() not in ("", "none") else "")
+                obj, kind = {"content": content}, "answer" if kind.startswith("ans") else "message"
             if kind in ("message", "answer"):
                 if kind == "message" and not obs.can_message:
                     kind = "answer"

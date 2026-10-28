@@ -112,8 +112,10 @@ def run_episode(gm: GameMaster, players: Dict[str, "Player"], channel: Channel,
         move = players[role].act(obs)
         rejected, violation = [], None
         validate = getattr(gm, "validate", None)
-        while validate is not None and move.kind == "message":
-            violation = validate(role, move.content)
+        while move.kind == "message":
+            # an empty message is always rejected (seen with small local players: {"action": "message"})
+            violation = "Your message was empty." if not move.content.strip() else (
+                validate(role, move.content) if validate is not None else None)
             if violation is None or len(rejected) == MAX_REWRITES:
                 break
             rejected.append({"text": move.content, "reason": violation})
