@@ -254,7 +254,7 @@ def test_players_see_their_own_earlier_messages():
     assert "You: Q1?" in prompt and "Partner: Henteu" in prompt
 
 
-@pytest.mark.parametrize("game", ["image", "culture", "mcq", "twentyq", "sequence"])
+@pytest.mark.parametrize("game", ["image", "culture", "mcq", "twentyq", "sequence", "sequence_step"])
 def test_every_dialogue_game_shows_history(game):
     """At every turn a player sees every message sent so far (its own included); only MuG-Eval's MCQ
     answerer is reset per question, as in MuG-Eval's mcqa_gen_answer.py."""
@@ -280,11 +280,11 @@ def test_every_dialogue_game_shows_history(game):
                 "own_culture_idx": "B", "local_place": "Bandung", "visitor_own_culture": "Indonesia",
                 "local_knowledge": [{"question": "q", "answers": [{"answers": ["a"], "count": 3}]}]}
         gm, roles = BlendLocalVisitorGame(item, "su", "jv", max_questions=3, min_questions=1), ["visitor", "local"]
-    elif game == "sequence":
+    elif game.startswith("sequence"):
         from mtcomm.games.sequence import SequenceGame
 
         item = {"story": ["p1", "p2"], "shuffled": ["p2", "p1"], "gold": [2, 1]}
-        gm, roles = SequenceGame(item, "su", "jv", max_questions=3), ["narrator", "arranger"]
+        gm, roles = SequenceGame(item, "su", "jv", max_questions=3, stepwise=game == "sequence_step"), ["narrator", "arranger"]
     elif game == "mcq":
         item = {"passage_a": "p", "question_q": "q", "options_q": ["a", "b", "c", "d"], "gold": 1}
         gm, roles = MCQConversationGame(item, "su", "jv"), ["questioner", "answerer"]
@@ -332,3 +332,27 @@ def test_sequence_items_shuffled_and_gold_consistent():
         assert it["shuffled"] != it["story"] and sorted(it["shuffled"]) == sorted(it["story"])
         assert [it["shuffled"][g - 1] for g in it["gold"]] == it["story"]
         assert all(Path(p).exists() for p in it["story"])
+
+
+def test_sequence_stepwise_turns_and_answer_gate():
+    from mtcomm.games.sequence import SequenceGame
+
+    item = {"story": ["p1", "p2", "p3"], "shuffled": ["p3", "p1", "p2"], "gold": [2, 3, 1]}
+    gm = SequenceGame(item, "su", "jv", stepwise=True, max_questions=1)
+    assert gm.next_role() == "narrator"
+    gm.apply("narrator", Move("message", "a cat"), ChannelOutput("a cat"))
+    obs = gm.observe("arranger")
+    assert obs.can_message and not obs.can_answer  # must hear all three pictures first
+    gm.apply("arranger", Move("message", "the grey cat?"), ChannelOutput("the grey cat?"))
+    assert gm.next_role() == "narrator"
+    for m in ["yes, grey", "a dog", "a bird"]:
+        gm.apply("narrator", Move("message", m), ChannelOutput(m))
+        if gm._narrator_left() > 0 or m != "a bird":
+            gm.apply("arranger", Move("message", "ok"), ChannelOutput("ok"))
+    # Narrator budget (3 pictures + 1 question) is used up: the arranger must answer now.
+    assert gm.next_role() == "arranger"
+    obs = gm.observe("arranger")
+    assert obs.can_answer and not obs.can_message
+    gm.apply("arranger", Move("answer", "2, 3, 1"))
+    s = gm.score()
+    assert s["correct"] and s["narrator_messages"] == 4 and s["messages_over_word_limit"] == 0

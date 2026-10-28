@@ -47,7 +47,7 @@ from mtcomm.replay import BatchGenerate, CachedChannel, CallFailed, Pending, Rep
 
 PLAYER = "gemini-3.8-flash"
 PERTURB_MANIFEST = DATA_ROOT / "derived" / "perturb" / "full60" / "manifest_perturb_full60.json"
-TASKS = ["image", "mcq", "twentyq", "culture", "sequence"]
+TASKS = ["image", "mcq", "twentyq", "culture", "sequence", "sequence_step"]
 # (a, b): image describer=a, guesser=b; sequence narrator=a, arranger=b; MuG-Eval questioner=a, answerer=b.
 PAIRS = [("su", "jv"), ("jv", "su"), ("su", "ko"), ("ko", "su")]
 # Culture: (local culture, visitor language); the local speaks the culture's language.
@@ -139,15 +139,16 @@ def episodes(opts):
                                         ImageRefGame(it, da, b, allow_message=cond != "prior", max_words=14,
                                                      max_questions=3 if cond != "prior" else 0),
                                         ["describer", "guesser"]))
-    if "sequence" in tasks:
+    for task in [t for t in ("sequence", "sequence_step") if t in tasks]:
         items = load_sequence_items()[:n]
         for a, b in pairs:
             for it in items:
                 for cond in conditions(a, b) + ["ceiling", "prior"]:
                     na = b if cond == "ceiling" else a
-                    yield from emit("sequence", f"{a}-{b}", cond, b, it["item_id"],
-                                    lambda it=it, na=na, b=b, cond=cond: (
-                                        SequenceGame(it, na, b, allow_message=cond != "prior"),
+                    yield from emit(task, f"{a}-{b}", cond, b, it["item_id"],
+                                    lambda it=it, na=na, b=b, cond=cond, task=task: (
+                                        SequenceGame(it, na, b, allow_message=cond != "prior",
+                                                     stepwise=task == "sequence_step"),
                                         ["narrator", "arranger"]))
     for task, Game, load in [("mcq", MCQConversationGame, load_mcq_items),
                              ("twentyq", TwentyQuestionsGame, load_twentyq_items)]:
