@@ -15,7 +15,10 @@ than max_landmarks landmarks, or shaped like a list (arrows, numbering, line bre
 measurements, brackets), and the runner asks for a rewrite (game.run_episode).
 
 The follower answers one step per line: "<landmark as written on its map>, left|right" or "cell D7".
-Scoring is mtcomm.routemap.score_picture: success = every step right in order.
+Success (mtcomm.routemap.route_success) = the waypoints in order, by name or by a position within one
+cell; extra steps are allowed where the true path passes them. The dry run showed why: givers mention
+landmarks the route passes, and compass sides ("the east side of the temple") turn into left/right only
+loosely at turns. Strict step match (sides included), side accuracy and path deviation are secondary.
 """
 
 import math
@@ -24,7 +27,7 @@ from typing import List, Optional
 
 from ..game import GameMaster, Observation
 from ..languages import get as lang
-from ..routemap import COLS, score_picture
+from ..routemap import COLS, route_success, score_picture
 
 LIST_SHAPES = [
     (re.compile(r"->|→|=>|⇒|>"), "uses arrows"),
@@ -149,7 +152,11 @@ class RouteGame(GameMaster):
         steps = parse_route_answer(answers[-1], self.item["labels"][fl], self.item["directions"][fl])
         sc = score_picture(self.item["map"], steps)
         giver = [t for t in self.turns if t.role == "giver" and t.kind == "message"]
-        return {"correct": sc["success"], "step_accuracy": sc["step_accuracy"],
+        sides = [a.get("side") == g["side"] for g, a in zip(self.item["map"]["gold_answer"], steps)
+                 if "side" in g and a.get("landmark") == g.get("landmark")]
+        return {"correct": route_success(self.item["map"], steps), "strict_success": sc["success"],
+                "side_accuracy": round(sum(sides) / len(sides), 3) if sides else None,
+                "step_accuracy": sc["step_accuracy"],
                 "deviation_cells": sc["deviation_cells"], "answer_steps": steps,
                 "gold": self.item["map"]["gold_answer"], "level": self.item["map"]["level"],
                 "giver_messages": len(giver), "follower_messages": self._sent("follower"),

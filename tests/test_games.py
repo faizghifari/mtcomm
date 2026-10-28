@@ -406,4 +406,33 @@ def test_route_rewrite_loop_and_scoring():
     flipped = answer.replace(", left", ", RIGHTX", 1).replace("RIGHTX", "right")
     gm2 = RouteGame(it, "en", "en", allow_message=False)
     gm2.apply("follower", Move("answer", flipped))
-    assert gm2.score()["correct"] is False and gm2.score()["step_accuracy"] >= 0.8
+    s2 = gm2.score()  # a wrong side is not a failure of the route, but is reported
+    assert s2["correct"] is True and s2["strict_success"] is False and s2["side_accuracy"] < 1
+
+
+def test_route_success_tolerates_passed_landmarks_only():
+    import math
+
+    from mtcomm.routemap import CELL, _resample, cell_of, route_points, route_success
+
+    it = _route_item()
+    m = it["map"]
+    gold = [dict(g) for g in m["gold_answer"]]
+    assert route_success(m, gold)
+    true = _resample(route_points(m))
+    gold_names = {g.get("landmark") for g in gold}
+    dist = {l["name"]: min(math.dist((l["x"], l["y"]), q) for q in true) for l in m["follower_landmarks"]
+            if l["name"] not in gold_names}
+    far = max(dist, key=dist.get)
+    assert dist[far] > 0.75 * CELL
+    assert not route_success(m, gold[:1] + [{"landmark": far, "side": "left"}] + gold[1:])  # off the path
+    assert not route_success(m, gold[:-1])  # a waypoint missing
+    assert not route_success(m, list(reversed(gold)))  # wrong order
+    near = [n for n, d in dist.items() if d <= 0.75 * CELL]
+    if near:
+        assert route_success(m, [{"landmark": near[0], "side": "left"}] + gold)  # passed on the way
+    # A landmark the follower has can also be placed by its cell.
+    first = next(g for g in gold if "landmark" in g)
+    lm = next(l for l in m["giver_landmarks"] if l["name"] == first["landmark"])
+    by_cell = [{"cell": cell_of(lm)} if g is first else g for g in gold]
+    assert route_success(m, by_cell)

@@ -175,6 +175,39 @@ def _resample(pts, n=200):
     return out
 
 
+def _answer_pos(m, a):
+    """Where a follower's step lies on the follower's map (None if it names nothing on that map)."""
+    if "cell" in a:
+        return cell_center(a["cell"])
+    pos = {l["name"]: (l["x"], l["y"]) for l in m["follower_landmarks"]}
+    return pos.get(a.get("landmark"))
+
+
+def _waypoint_ok(m, gold, a):
+    """A step matches a waypoint by landmark name, or by a position within one cell of it (sides ignored)."""
+    if "landmark" in gold and a.get("landmark") == gold["landmark"]:
+        return True
+    gp = cell_center(gold["cell"]) if "cell" in gold else next(
+        ((l["x"], l["y"]) for l in m["giver_landmarks"] if l["name"] == gold["landmark"]), None)
+    ap = _answer_pos(m, a)
+    return gp is not None and ap is not None and max(abs(gp[0] - ap[0]), abs(gp[1] - ap[1])) <= CELL + 1
+
+
+def route_success(m, answer, near=0.75 * CELL):
+    """Primary route score: the waypoints in order. Extra steps are allowed when they lie near the true path
+    (givers mention landmarks the route passes, and followers list them); sides are scored separately."""
+    true = _resample(route_points(m))
+    gi = 0
+    for a in answer:
+        if gi < len(m["gold_answer"]) and _waypoint_ok(m, m["gold_answer"][gi], a):
+            gi += 1
+            continue
+        p = _answer_pos(m, a)
+        if p is None or min(math.dist(p, q) for q in true) > near:
+            return False
+    return gi == len(m["gold_answer"])
+
+
 def score_picture(m, answer):
     """Primary: success = every step right, in order. Secondary: per-step accuracy (LCS) and the Map-Task-style
     deviation between drawn and true paths (mean symmetric nearest-point distance, in grid cells)."""
