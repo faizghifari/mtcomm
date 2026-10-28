@@ -5,9 +5,11 @@ is translated src -> tgt -> src -> ... for `--trips` round trips with the same t
 back-translation is compared with the original (chrF and LaBSE cosine; same language, so no
 reference is needed). Drift over trips shows how much meaning the translator loses on this pair.
 
-Known confounds, handled here: an intermediate that is not in the target language (copied or
-untranslated) would round-trip perfectly, so each forward hop is language-checked and a failed
-hop ends the chain with score 0 from that trip on. The pivots (via Indonesian) count as one
+Known confounds, handled here: an intermediate that stays in the source language (copied or
+untranslated) would round-trip perfectly, so a forward hop whose output equals its input or is
+identified as the source language ends the chain with score 0 from that trip on. Other GlotLID
+mismatches are only recorded: on short su/jv messages it often returns ind, bjn, bug or ban for
+correct output. The pivots (via Indonesian) count as one
 translator per hop.
 
 LLM translators are batched per hop (the hops of a chain are sequential, the chains are not);
@@ -72,6 +74,15 @@ def llm_request(backend, text, src, tgt):
     return backend.build(rec.last[0], rec.last[1], [])
 
 
+def hop_failed(r):
+    if not r["out"]:
+        return True
+    if r["hop"] % 2:
+        return False
+    same = " ".join(r["out"].split()).casefold() == " ".join(r["in"].split()).casefold()
+    return same or (r["lid"] or {}).get("detected") == lang(r["src"]).iso3
+
+
 def direct_channel(name, made={}):
     if name not in made:
         if name == "nllb":
@@ -97,7 +108,7 @@ def run(args):
             jobs = []
             for c in todo:
                 h = hops[(tr, c["id"])]
-                if hop in h or any(x.get("failed") for x in h.values()):
+                if hop in h or any(hop_failed(x) for x in h.values()):
                     continue
                 prev = h[hop - 1]["out"] if hop else c["text"]
                 src, tgt = (c["src"], c["tgt"]) if hop % 2 == 0 else (c["tgt"], c["src"])
@@ -124,9 +135,8 @@ def run(args):
                     outs = list(ex.map(lambda j: (ch.translate(j[1], j[2], j[3]).text, None), jobs))
             for (c, prev, src, tgt), (text, usage) in zip(jobs, outs):
                 check = lid.check(text, tgt) if text else None
-                failed = text is None or (hop % 2 == 0 and not check["ok"])
                 r = {"translator": tr, "chain": c["id"], "hop": hop, "src": src, "tgt": tgt, "in": prev, "out": text,
-                     "lid": check, "failed": failed, "usage": usage}
+                     "lid": check, "usage": usage}
                 hops[(tr, c["id"])][hop] = r
                 log.write(json.dumps(r, ensure_ascii=False) + "\n")
             log.flush()
@@ -166,7 +176,7 @@ def score(args):
         row = {"translator": tr, "chain": cid, "task": cs[cid]["task"], "pair": cs[cid]["pair"]}
         for k in range(1, trips + 1):
             back = h.get(2 * k - 1)
-            ok = back and back["out"] and not any(h[j]["failed"] for j in range(2 * k) if j in h)
+            ok = back and back["out"] and not any(hop_failed(h[j]) for j in range(2 * k) if j in h)
             row[f"back{k}"] = back["out"] if ok else None
             if ok:
                 pairs.append((cs[cid]["text"], back["out"]))

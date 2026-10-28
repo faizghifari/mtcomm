@@ -296,12 +296,16 @@ class LocalBackend(Backend):
 
     `model` is "local:<lm studio id>". Temperature 0; any <think> block is dropped. Local calls are
     free, so `submit` just runs the requests synchronously and `results` returns them.
+    reasoning_effort "none" turns thinking off for models that think by default (Gemma-SEA-LION-v4.5
+    otherwise spends the whole token budget on reasoning); non-thinking models ignore it.
     """
 
     provider = "local"
 
-    def __init__(self, model: str, max_tokens: int = 1024, json_mode: bool = True, workers: int = 4):
+    def __init__(self, model: str, max_tokens: int = 1024, json_mode: bool = True, workers: int = 4,
+                 reasoning_effort: Optional[str] = "none"):
         self.model, self.max_tokens, self.json_mode, self.workers = model, max_tokens, json_mode, workers
+        self.reasoning_effort = reasoning_effort
         self.model_id = model.split(":", 1)[1]
         self._done: Dict[str, Dict[str, dict]] = {}
 
@@ -318,7 +322,8 @@ class LocalBackend(Backend):
 
     def config(self):
         return {"provider": self.provider, "model": self.model_id, "endpoint": "/v1/chat/completions",
-                "temperature": 0, "max_tokens": self.max_tokens, "image_max_side": MAX_SIDE}
+                "temperature": 0, "max_tokens": self.max_tokens, "reasoning_effort": self.reasoning_effort,
+                "image_max_side": MAX_SIDE}
 
     def build(self, prompt, system_prompt, images):
         content = []
@@ -328,7 +333,10 @@ class LocalBackend(Backend):
         content.append({"type": "text", "text": prompt})
         msgs = [{"role": "system", "content": system_prompt}] if system_prompt else []
         msgs.append({"role": "user", "content": content if images else prompt})
-        return {"model": self.model_id, "messages": msgs, "temperature": 0, "max_tokens": self.max_tokens}
+        req = {"model": self.model_id, "messages": msgs, "temperature": 0, "max_tokens": self.max_tokens}
+        if self.reasoning_effort:
+            req["reasoning_effort"] = self.reasoning_effort
+        return req
 
     def parse(self, response):
         import re
