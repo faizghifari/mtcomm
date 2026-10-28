@@ -277,27 +277,30 @@ if __name__ == "__main__":
 
 # ---------------------------------------------------------------- sequence ordering (Bloom-VIST)
 
+# v3 = v2 plus two same-book distractor pages per story (scripts/bloomvist_add_distractors.py);
 # v2 = stories the no-talk prior cannot put in order (scripts/sequence_prior_screen.py); v1 = first 30 built.
-SEQUENCE_MANIFEST_V1 = DATA_ROOT / "derived" / "bloom_vist" / "manifest_seq_v1.json"
-SEQUENCE_MANIFEST_V2 = DATA_ROOT / "derived" / "bloom_vist" / "manifest_seq_v2.json"
-SEQUENCE_MANIFEST = SEQUENCE_MANIFEST_V2 if SEQUENCE_MANIFEST_V2.exists() else SEQUENCE_MANIFEST_V1
+SEQUENCE_MANIFEST = next((DATA_ROOT / "derived" / "bloom_vist" / f"manifest_seq_v{v}.json" for v in (3, 2, 1)
+                          if (DATA_ROOT / "derived" / "bloom_vist" / f"manifest_seq_v{v}.json").exists()),
+                         DATA_ROOT / "derived" / "bloom_vist" / "manifest_seq_v1.json")
 
 
 def load_sequence_items(seed: int = 0, manifest_path=None) -> List[dict]:
-    """One item per story: `story` in true order, `shuffled` (the arranger's order, never the identity),
-    and `gold`, the arranger's photo number for each story position."""
+    """One item per story: `story` in true order, `shuffled` (the arranger's photos: the story plus any
+    same-book `distractors`, never in story order), and `gold`, the arranger's photo number for each
+    story position."""
     path = Path(manifest_path or SEQUENCE_MANIFEST)
     doc = json.loads(path.read_text(encoding="utf-8"))
     image_dir = path.parent / "images"
     items = []
     for i, s in enumerate(doc["stories"]):
         story = [str(image_dir / f) for f in s["images"]]
+        distractors = [str(image_dir / f) for f in s.get("distractors", [])]
         rng = random.Random(f"{seed}-{s['story_id']}")
-        shuffled = list(story)
-        while shuffled == story:
+        shuffled = story + distractors
+        while [p for p in shuffled if p in story] == story:
             rng.shuffle(shuffled)
         items.append({"item_id": f"S{i + 1:02d}", "story_id": s["story_id"], "title": s["title"],
-                      "licence": s["licence"], "story": story, "shuffled": shuffled,
+                      "licence": s["licence"], "story": story, "distractors": distractors, "shuffled": shuffled,
                       "gold": [shuffled.index(p) + 1 for p in story]})
     return items
 

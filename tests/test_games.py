@@ -331,9 +331,10 @@ def test_sequence_items_shuffled_and_gold_consistent():
     if not SEQUENCE_MANIFEST.exists():
         pytest.skip("Bloom-VIST sets not built")
     items = load_sequence_items()
-    assert len(items) == 30
+    assert len(items) >= 30
     for it in items:
-        assert it["shuffled"] != it["story"] and sorted(it["shuffled"]) == sorted(it["story"])
+        assert [p for p in it["shuffled"] if p in it["story"]] != it["story"]  # never already in order
+        assert sorted(it["shuffled"]) == sorted(it["story"] + it["distractors"])
         assert [it["shuffled"][g - 1] for g in it["gold"]] == it["story"]
         assert all(Path(p).exists() for p in it["story"])
 
@@ -436,3 +437,32 @@ def test_route_success_tolerates_passed_landmarks_only():
     lm = next(l for l in m["giver_landmarks"] if l["name"] == first["landmark"])
     by_cell = [{"cell": cell_of(lm)} if g is first else g for g in gold]
     assert route_success(m, by_cell)
+
+
+def test_sequence_with_distractors_pick_and_order():
+    from mtcomm.games.sequence import SequenceGame
+
+    item = {"story": ["p1", "p2", "p3"], "distractors": ["d1", "d2"], "shuffled": ["d1", "p3", "p1", "d2", "p2"],
+            "gold": [3, 5, 2]}
+    gm = SequenceGame(item, "su", "jv", allow_message=False)
+    assert "same book" in gm.observe("arranger").instructions
+    gm.apply("arranger", Move("answer", "3, 5, 2"))
+    assert gm.score()["correct"] and gm.score()["picked"] == 3
+    gm2 = SequenceGame(item, "su", "jv", allow_message=False)
+    gm2.apply("arranger", Move("answer", "3, 4, 2"))  # a distractor instead of p2
+    s = gm2.score()
+    assert s["valid_format"] and not s["correct"] and s["picked"] == 2 and s["kendall_tau"] == 1.0
+    gm3 = SequenceGame(item, "su", "jv", stepwise=True)
+    assert "mixed with 2 other pages" in gm3.observe("narrator").instructions
+
+
+def test_sequence_items_include_distractors_when_built():
+    from mtcomm.data import SEQUENCE_MANIFEST, load_sequence_items
+
+    items = load_sequence_items()
+    if "v3" not in SEQUENCE_MANIFEST.name:
+        pytest.skip("no distractor manifest")
+    for it in items:
+        assert len(it["distractors"]) == 2 and len(it["shuffled"]) == 7
+        assert [it["shuffled"][g - 1] for g in it["gold"]] == it["story"]
+        assert all(Path(p).exists() for p in it["distractors"])

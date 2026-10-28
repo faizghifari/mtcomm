@@ -1,7 +1,8 @@
 """Sequence ordering game: the narrator sees a picture story in order, the arranger puts it back in order.
 
-Item fields: story (image paths in true order), shuffled (the same paths in the arranger's order),
-gold (for each story position, the arranger's 1-based photo number).
+Item fields: story (image paths in true order), shuffled (the arranger's photos: the story plus any
+same-book distractor pages, shuffled), gold (for each story position, the arranger's 1-based photo
+number). With distractors the arranger must pick the story's pictures as well as order them.
 
 The narrator speaks first and tells the story picture by picture; the arranger may then ask up to
 max_questions questions, each answered, before giving the order. The narrator's photo numbers are
@@ -27,9 +28,10 @@ from ..languages import get as lang
 
 
 def kendall_tau(guess: List[int], gold: List[int]) -> float:
-    """Rank agreement between two orderings of the same items, in [-1, 1]."""
+    """Rank agreement in [-1, 1] over the story pictures the guess contains (a distractor picked instead
+    of a story picture is counted by `picked`, not here)."""
     pos = {x: i for i, x in enumerate(guess)}
-    ranks = [pos[x] for x in gold]
+    ranks = [pos[x] for x in gold if x in pos]
     n = len(ranks)
     pairs = n * (n - 1) / 2
     concordant = sum(1 for i in range(n) for j in range(i + 1, n) if ranks[i] < ranks[j])
@@ -45,6 +47,10 @@ class SequenceGame(GameMaster):
         self.max_words, self.reply_words = max_words, reply_words
         self.max_questions = max_questions if allow_message else 0
         self.stepwise, self.step_words = stepwise and allow_message, step_words
+
+    def _extra(self):
+        k = len(self.item["shuffled"]) - len(self.item["story"])
+        return f", mixed with {k} other pages from the same book," if k else ""
 
     def _narrated(self):
         return sum(1 for t in self.turns if t.role == "narrator" and t.kind == "message")
@@ -79,8 +85,8 @@ class SequenceGame(GameMaster):
                 return Observation(
                     role, self.roles[role],
                     f"You see {n} photos that tell a story, in their correct order (photo 1 comes first). Your "
-                    f"partner has the same {n} photos in a different, shuffled order and numbering, so your photo "
-                    f"numbers mean nothing to them. Tell your partner the story picture by picture in {name}, so "
+                    f"partner has the same {n} photos{self._extra()} in a different, shuffled order and numbering, so "
+                    f"your photo numbers mean nothing to them. Tell your partner the story picture by picture in {name}, so "
                     f"they can put their photos in the right order. Write only in {name}.{limit}" +
                     (f" Your partner may then ask you up to {self.max_questions} questions." if self.max_questions else ""),
                     images=list(self.item["story"]), can_message=True, can_answer=False)
@@ -97,11 +103,12 @@ class SequenceGame(GameMaster):
                f"in {name}." if can_ask else "")
         told = ("Your partner, who sees them in the correct order, has told you the story."
                 if self.allow_message else "Nobody can tell you the story.")
+        m = len(self.item["shuffled"])
         return Observation(
             role, self.roles[role],
-            f"You see {n} photos, numbered 1 to {n} in the order given, which are a shuffled picture story. {told} "
-            f"Put the photos in the story's order.{ask} Your answer is only the {n} photo numbers in story order, "
-            f"separated by commas (for example: 3, 1, 5, 2, 4).",
+            f"You see {m} photos, numbered 1 to {m} in the order given. {self._which(n, m)} {told} "
+            f"Put the story's photos in order.{ask} Your answer is only the {n} photo numbers of the story, in "
+            f"story order, separated by commas (for example: 3, 1, 5, 2, 4).",
             images=list(self.item["shuffled"]), inbox=list(self.inbox[role]), can_message=can_ask, can_answer=True)
 
     def _observe_stepwise(self, role):
@@ -113,13 +120,14 @@ class SequenceGame(GameMaster):
             return Observation(
                 role, self.roles[role],
                 f"You see {n} photos that tell a story, in their correct order (photo 1 comes first). Your partner "
-                f"has the same {n} photos in a different, shuffled order and numbering, so your photo numbers mean "
-                f"nothing to them. Tell your partner the story one picture at a time, in order, in {name}: each "
+                f"has the same {n} photos{self._extra()} in a different, shuffled order and numbering, so your photo "
+                f"numbers mean nothing to them. Tell your partner the story one picture at a time, in order, in {name}: each "
                 f"message describes only the next picture ({limit.strip(' ,') or 'briefly'}), then wait for your "
                 f"partner's reply. If your partner asks something, answer it before moving on. You have {left} "
                 f"message(s) left for {n} pictures and any answers. Write only in {name}.",
                 images=list(self.item["story"]), inbox=list(self.inbox[role]), can_message=True, can_answer=False)
         heard = self._narrated()
+        m = len(self.item["shuffled"])
         can_answer = heard >= n or self._narrator_left() <= 0
         can_msg = self._narrator_left() > 0
         what = (f"Reply in {name},{limit} either saying which of your photos you think your partner just described "
@@ -130,12 +138,19 @@ class SequenceGame(GameMaster):
                 f" You can give your answer once your partner has described all {n} pictures.")
         return Observation(
             role, self.roles[role],
-            f"You see {n} photos, numbered 1 to {n} in the order given, which are a shuffled picture story. Your "
-            f"partner, who sees them in the correct order, is telling you the story one picture at a time. {what}"
-            f"{when} Your answer is only the {n} photo numbers in story order, separated by commas (for example: "
-            f"3, 1, 5, 2, 4).",
+            f"You see {m} photos, numbered 1 to {m} in the order given. {self._which(n, m)} Your partner, who sees "
+            f"the story's {n} pictures in the correct order, is telling you the story one picture at a time. {what}"
+            f"{when} Your answer is only the {n} photo numbers of the story, in story order, separated by commas "
+            f"(for example: 3, 1, 5, 2, 4).",
             images=list(self.item["shuffled"]), inbox=list(self.inbox[role]), can_message=can_msg,
             can_answer=can_answer)
+
+    @staticmethod
+    def _which(n, m):
+        if m == n:
+            return "They are a shuffled picture story."
+        return (f"{n} of them are a shuffled picture story; the other {m - n} come from the same book but are not "
+                f"part of this story.")
 
     def is_done(self):
         return any(t.kind == "answer" and t.role == "arranger" for t in self.turns)
@@ -145,8 +160,9 @@ class SequenceGame(GameMaster):
         if not answers:
             return {"correct": None}
         n, gold = len(self.item["story"]), self.item["gold"]
+        m = len(self.item["shuffled"])
         nums = [int(x) for x in re.findall(r"\d+", answers[-1])]
-        guess = nums if sorted(nums) == list(range(1, n + 1)) else None  # must be a permutation
+        guess = nums if len(nums) == n and len(set(nums)) == n and all(1 <= x <= m for x in nums) else None
         msgs = [t.source for t in self.turns if t.kind == "message" and t.role == "narrator"]
         words = len(msgs[0].split()) if msgs else 0
         if self.stepwise:
@@ -154,11 +170,11 @@ class SequenceGame(GameMaster):
             return {"guess": guess, "gold": gold, "correct": guess == gold,
                     "positions_correct": sum(a == b for a, b in zip(guess, gold)) if guess else 0,
                     "kendall_tau": kendall_tau(guess, gold) if guess else None, "valid_format": guess is not None,
-                    "narrator_messages": len(msgs), "arranger_messages": self._questions(),
+                    "picked": len(set(guess) & set(gold)) if guess else 0, "narrator_messages": len(msgs), "arranger_messages": self._questions(),
                     "narrator_words_max": max((len(m.split()) for m in msgs), default=0),
                     "messages_over_word_limit": over}
         return {"guess": guess, "gold": gold, "correct": guess == gold,
                 "positions_correct": sum(a == b for a, b in zip(guess, gold)) if guess else 0,
                 "kendall_tau": kendall_tau(guess, gold) if guess else None, "valid_format": guess is not None,
-                "narrator_words": words, "questions_asked": self._questions(),
+                "picked": len(set(guess) & set(gold)) if guess else 0, "narrator_words": words, "questions_asked": self._questions(),
                 "over_word_limit": self.max_words is not None and words > self.max_words}
