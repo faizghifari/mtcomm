@@ -96,6 +96,19 @@ class TwentyQuestionsGame(_QAGame):
     max_questions = 20
 
     def observe(self, role):
+        if role == "answerer" and self.original:  # twenty_prompt_chat_easy_a.md; entity in the data language
+            q = self.inbox[role][-1] if self.inbox[role] else ""
+            entity = self.item["target_a"]
+            return Observation(
+                role, self.roles[role],
+                f'Answer the following question about the hidden entity: {entity}. Respond only with "Yes," "No," or '
+                f'"Maybe" (including the period) without providing explanations or additional words. Do not use '
+                f'"Maybe" if the answer can be definitively "Yes" or "No." Your responses must be in English. Never '
+                f'mention the entity in your response. If the query contains two or more questions asked '
+                f'simultaneously, consider it invalid and respond with "Maybe."\n\n<|Entity|>\n{entity}\n\n'
+                f"<|Language|>\n{lang(self.roles['questioner']).name}\n\n<|Question|>\n{q}\n\n"
+                f"<|Options|>\n\n- Yes.\n- No.\n- Maybe.",
+                inbox=list(self.inbox[role]), can_message=True, can_answer=False)
         if role == "answerer":
             name = lang(self.roles[role]).name
             q = self.inbox[role][-1] if self.inbox[role] else ""
@@ -120,7 +133,8 @@ class TwentyQuestionsGame(_QAGame):
                  f"correct. You have a maximum of {self.max_questions} questions before making your final choice, but "
                  f"fewer questions are better. When you have determined the correct entity, provide your final answer "
                  f"using double brackets: [[entity]]. The entity must be exactly as it appears in the Entity List (do "
-                 f"not translate to another language).\n\n<|Entity List|>\n{entity_list}\n\n<|Language|>\n{name}")
+                 f"not translate to another language).\n\n<|Entity List|>\n{entity_list}\n\n<|Language|>\n{name}"
+                 + ("\n\nBegin with your first question." if self.original else ""))
         final = ("You have now used all available questions. Based on the responses you've received, provide your "
                  "final guess of the entity. Even if you cannot determine the entity with confidence, provide your best "
                  "guess based on the information gathered. Indicate your answer in double brackets: [[entity]]. The "
