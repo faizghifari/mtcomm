@@ -90,7 +90,7 @@ def run(args):
     path = OUT / f"{args.model}.jsonl"
     done = set()
     if path.exists():
-        done = {(r["player"], r["read"], r["prompt"], r["key"]) for r in map(json.loads, open(path))}
+        done = {(r["player"], r["read"], r["prompt"], r["key"]) for r in map(json.loads, open(path)) if not r["error"]}
     subprocess.run([LMS, "unload", "--all"], capture_output=True)
     subprocess.run([LMS, "load", args.model, "--gpu", "max", "-c", "8192", "--parallel", str(args.workers), "-y"],
                    check=True, capture_output=True)
@@ -124,7 +124,7 @@ def run(args):
 
 
 def report(args):
-    rows = [r for p in sorted(OUT.glob("*.jsonl")) for r in map(json.loads, open(p))]
+    rows = [r for p in sorted(OUT.glob("*.jsonl")) for r in map(json.loads, open(p)) if not r["error"]]  # errors are retried
     cells = defaultdict(list)
     for r in rows:
         cells[(r["model"], r["player"], r["prompt"], r["read"])].append(r)
