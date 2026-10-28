@@ -29,6 +29,10 @@ LANGUAGES = {
         Language("min", "Minangkabau", "min", "min_Latn", "min", None),
         Language("bug", "Buginese", "bug", "bug_Latn", None, None),
         Language("ace", "Acehnese", "ace", "ace_Latn", "ace", None),
+        # reading languages for the player screen (neighbour / widely known languages)
+        Language("ms", "Malay", "zsm", "zsm_Latn", "ms", "ms"),
+        Language("zh", "Chinese", "cmn", "zho_Hans", "zh-CN", "zh"),
+        Language("ja", "Japanese", "jpn", "jpn_Jpan", "ja", "ja"),
     ]
 }
 

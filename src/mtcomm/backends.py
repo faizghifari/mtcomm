@@ -291,7 +291,93 @@ class OpenAIBackend(Backend):
         return out
 
 
+class LocalBackend(Backend):
+    """A model served by LM Studio on the Windows host (OpenAI-compatible chat completions).
+
+    `model` is "local:<lm studio id>". Temperature 0; any <think> block is dropped. Local calls are
+    free, so `submit` just runs the requests synchronously and `results` returns them.
+    """
+
+    provider = "local"
+
+    def __init__(self, model: str, max_tokens: int = 1024, json_mode: bool = True, workers: int = 4):
+        self.model, self.max_tokens, self.json_mode, self.workers = model, max_tokens, json_mode, workers
+        self.model_id = model.split(":", 1)[1]
+        self._done: Dict[str, Dict[str, dict]] = {}
+
+    @staticmethod
+    @lru_cache(maxsize=1)
+    def base_url() -> str:
+        """WSL reaches the host's LM Studio through the default gateway, which can change on reboot."""
+        if os.environ.get("LMSTUDIO_URL"):
+            return os.environ["LMSTUDIO_URL"].rstrip("/")
+        import subprocess
+
+        gw = subprocess.run(["ip", "route"], capture_output=True, text=True).stdout.split("default via ")[1].split()[0]
+        return f"http://{gw}:1234/v1"
+
+    def config(self):
+        return {"provider": self.provider, "model": self.model_id, "endpoint": "/v1/chat/completions",
+                "temperature": 0, "max_tokens": self.max_tokens, "image_max_side": MAX_SIDE}
+
+    def build(self, prompt, system_prompt, images):
+        content = []
+        for i, p in enumerate(images, 1):
+            content.append({"type": "text", "text": f"Photo {i}:"})
+            content.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_b64(p)}"}})
+        content.append({"type": "text", "text": prompt})
+        msgs = [{"role": "system", "content": system_prompt}] if system_prompt else []
+        msgs.append({"role": "user", "content": content if images else prompt})
+        return {"model": self.model_id, "messages": msgs, "temperature": 0, "max_tokens": self.max_tokens}
+
+    def parse(self, response):
+        import re
+
+        text = response["choices"][0]["message"].get("content") or ""
+        text = re.sub(r"<think>.*?(</think>|$)", "", text, flags=re.S).strip()
+        if not text:
+            raise ValueError(f"empty response (finish reason: {response['choices'][0].get('finish_reason')})")
+        return text
+
+    def call(self, req: dict) -> dict:
+        import requests
+
+        for attempt in range(4):
+            try:
+                r = requests.post(f"{self.base_url()}/chat/completions", json=req, timeout=600)
+            except requests.RequestException as e:
+                err = str(e)
+            else:
+                if r.status_code == 200:
+                    j = r.json()
+                    try:
+                        return {"text": self.parse(j), "usage": j.get("usage")}
+                    except Exception as e:
+                        return {"error": str(e)[:500], "usage": j.get("usage")}
+                err = f"HTTP {r.status_code}: {r.text[:300]}"
+            time.sleep(2 ** attempt * 2)
+        return {"error": err}
+
+    def submit(self, requests, workdir):
+        from concurrent.futures import ThreadPoolExecutor
+
+        keys = [k for k, _ in requests]
+        with ThreadPoolExecutor(self.workers) as ex:
+            outs = list(ex.map(self.call, [r for _, r in requests]))
+        job = f"local-{len(self._done)}"
+        self._done[job] = dict(zip(keys, outs))
+        return job
+
+    def status(self, job):
+        return "succeeded"
+
+    def results(self, job):
+        return self._done[job]
+
+
 def make_backend(model: str, **kw) -> Backend:
+    if model.startswith("local:"):
+        return LocalBackend(model, **kw)
     if model.startswith("gemini"):
         return GeminiBackend(model, **kw)
     if model.startswith("gpt"):
