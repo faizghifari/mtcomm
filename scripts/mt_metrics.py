@@ -4,11 +4,15 @@
            identical (source, translation, direction) triples are scored once
   comet    CometKiwi and XCOMET-XL, reference-free, as in mt-eval's compute_comet.py (scripts/comet_score.py
            in the separate .venv-metrics env; local GPU, run when no NLLB process holds the GPU)
+  gemba    GEMBA-MQM (mt-eval's prompt, parser and severity weights, imported from its compute_gemba.py)
+           on a stratified sample, up to --per-cell messages per (task, condition), as one Gemini batch;
+           judge Gemini 3.8 Flash (mt-eval's gemini-3-flash-preview judge may be retired). Re-run to poll.
   report   join scores back to messages and games: mean per (task, pair, condition), and how well the
            episode's mean score separates successful from failed games (AUC)
 
 Usage: python scripts/mt_metrics.py export --runs main_image main_mcq
        python scripts/mt_metrics.py comet
+       python scripts/mt_metrics.py gemba [--per-cell 20] [--loop]
        python scripts/mt_metrics.py report
 """
 
@@ -66,6 +70,79 @@ def comet(batch_size, models):
     subprocess.run(cmd, check=True)
 
 
+GEMBA_DIR = Path("/mnt/d/dev/mt-eval/interpreter-agent-eval/research/mt_compare")
+JUDGE = "gemini-3.8-flash"
+
+
+def _mt_eval_gemba():
+    import importlib.util
+    import sys
+
+    sys.path.insert(0, str(GEMBA_DIR))
+    spec = importlib.util.spec_from_file_location("compute_gemba", GEMBA_DIR / "compute_gemba.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def gemba(per_cell, loop):
+    import random
+    import time
+
+    from mtcomm.backends import make_backend
+    from mtcomm.languages import get as lang
+
+    g = _mt_eval_gemba()
+    segs = {json.loads(line)["record_id"]: json.loads(line) for line in open(OUT / "segments.jsonl")}
+    cells = defaultdict(set)
+    for line in open(OUT / "messages.jsonl"):
+        m = json.loads(line)
+        cells[(m["task"], m["cond"])].add(m["seg"])
+    rng = random.Random(0)
+    sample = sorted({sid for ids in cells.values() for sid in rng.sample(sorted(ids), min(per_cell, len(ids)))})
+    backend = make_backend(JUDGE)
+    state_p, out_p = OUT / "gemba_state.json", OUT / "gemba_scores.jsonl"
+    done = {json.loads(line)["record_id"] for line in open(out_p)} if out_p.exists() else set()
+    while True:
+        state = json.load(open(state_p)) if state_p.exists() else {"job": None, "ids": [], "rounds": 0}
+        if state["job"]:
+            st = backend.status(state["job"])
+            if st == "running":
+                print(f"GEMBA batch {state['job']} running", flush=True)
+                if not loop:
+                    return
+                time.sleep(120)
+                continue
+            res = backend.results(state["job"]) if st == "succeeded" else {}
+            with open(out_p, "a") as f:
+                for sid in state["ids"]:
+                    r = res.get(sid, {})
+                    if "text" not in r:
+                        continue
+                    errors = g.parse_errors(r["text"])
+                    raw, extra = g.score_from_errors(errors)
+                    f.write(json.dumps({"record_id": sid, "gemba_score": raw, **extra, "errors": errors,
+                                        "judge": JUDGE, "usage": r.get("usage")}, ensure_ascii=False) + "\n")
+                    done.add(sid)
+            state = {"job": None, "ids": [], "rounds": state.get("rounds", 0)}
+            json.dump(state, open(state_p, "w"))
+        todo = [sid for sid in sample if sid not in done]
+        if not todo or state.get("rounds", 0) >= 2:  # unparseable after two batches: leave unscored
+            print(f"GEMBA: {len(done & set(sample))}/{len(sample)} sampled segments scored -> {out_p}")
+            return
+        reqs = []
+        for sid in todo:
+            sg = segs[sid]
+            prompt = g.PROMPT_TEMPLATE.format(src_lang=lang(sg["src_lang"]).name, tgt_lang=lang(sg["tgt_lang"]).name,
+                                              source=sg["source_text"], hypothesis=sg["post_edit"])
+            reqs.append((sid, backend.build(prompt, g.SYSTEM_PROMPT, [])))
+        state = {"job": backend.submit(reqs, OUT), "ids": todo, "rounds": state.get("rounds", 0) + 1}
+        json.dump(state, open(state_p, "w"))
+        print(f"GEMBA: submitted {len(todo)} segments -> {state['job']}", flush=True)
+        if not loop:
+            return
+
+
 def _auc(pos, neg):
     """P(score of a successful game > score of a failed one); ties count half."""
     if not pos or not neg:
@@ -79,6 +156,11 @@ def report():
     for line in open(OUT / "comet_scores.jsonl"):
         r = json.loads(line)
         scores[r["record_id"]] = {m: r.get(f"{m}_score") for m in MODELS}
+    gp = OUT / "gemba_scores.jsonl"
+    if gp.exists():
+        for line in open(gp):
+            r = json.loads(line)
+            scores.setdefault(r["record_id"], {})["gemba"] = r["gemba_norm"]
     cells = defaultdict(lambda: defaultdict(list))
     episodes = defaultdict(lambda: defaultdict(list))
     outcome = {}
@@ -97,7 +179,7 @@ def report():
             for (t, p, c), v in sorted(cells.items())]
     auc = {}
     for task in sorted({t for t, _ in episodes}):
-        for metric in MODELS:
+        for metric in MODELS + ["gemba"]:
             ep = [(sum(v[metric]) / len(v[metric]), outcome[k]) for k, v in episodes.items()
                   if k[0] == task and v[metric]]
             auc[f"{task}/{metric}"] = _auc([s for s, ok in ep if ok], [s for s, ok in ep if not ok])
@@ -109,7 +191,9 @@ def report():
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=["export", "comet", "report"])
+    ap.add_argument("cmd", choices=["export", "comet", "gemba", "report"])
+    ap.add_argument("--per-cell", type=int, default=20)
+    ap.add_argument("--loop", action="store_true")
     ap.add_argument("--runs", nargs="*", default=["main_image", "main_mcq"])
     ap.add_argument("--batch-size", type=int, default=16)
     ap.add_argument("--models", nargs="*", default=MODELS)
@@ -118,6 +202,8 @@ def main():
         export(args.runs)
     elif args.cmd == "comet":
         comet(args.batch_size, args.models)
+    elif args.cmd == "gemba":
+        gemba(args.per_cell, args.loop)
     else:
         report()
 
