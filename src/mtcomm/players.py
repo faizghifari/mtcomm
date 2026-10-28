@@ -72,6 +72,9 @@ class LLMPlayer(Player):
         elif obs.inbox:
             msgs = "\n".join(f"- {m if m is not None else '(nothing arrived)'}" for m in obs.inbox)
             parts.append(f"Messages you have received from your partner, in order:\n{msgs}")
+        if obs.feedback:
+            parts.append(f"Your last message was NOT sent, because it broke the rules: {obs.feedback} "
+                         "Write it again, following the rules.")
         allowed = []
         if obs.can_message:
             allowed.append("send a message")

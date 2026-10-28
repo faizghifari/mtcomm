@@ -23,6 +23,7 @@ class Observation:
     # The whole conversation in this player's view (own text as written, partner's as delivered).
     # Filled by run_episode for players whose game shares a history (non-empty inbox).
     dialogue: List[dict] = field(default_factory=list)
+    feedback: Optional[str] = None  # why this player's last attempt was rejected (games with validate())
     can_message: bool = True
     can_answer: bool = False
 
@@ -41,6 +42,8 @@ class Turn:
     delivered: Optional[str] = None  # what the other player received (messages only)
     channel_meta: dict = field(default_factory=dict)
     lid: Optional[dict] = None  # language check on the player's own text
+    rejected: List[dict] = field(default_factory=list)  # attempts the game refused before this one
+    violation: Optional[str] = None  # set when the sent message still broke the game's rules
 
 
 class GameMaster(ABC):
@@ -89,9 +92,16 @@ class GameMaster(ABC):
         return {"item": self.item, "roles": self.roles, "turns": [asdict(t) for t in self.turns], "score": self.score()}
 
 
+MAX_REWRITES = 2
+
+
 def run_episode(gm: GameMaster, players: Dict[str, "Player"], channel: Channel,
                 lid: Optional[Callable[[str, str], dict]] = None, max_moves: int = 20) -> dict:
-    """Play one episode. `lid(text, lang)` optionally checks each player's text is in its language."""
+    """Play one episode. `lid(text, lang)` optionally checks each player's text is in its language.
+
+    A game may define validate(role, text) -> reason or None: a rejected message never reaches the
+    channel; the player is told why and asked to rewrite it, up to MAX_REWRITES times, after which the
+    message is sent and flagged as a violation."""
     for _ in range(max_moves):
         if gm.is_done():
             break
@@ -100,12 +110,24 @@ def run_episode(gm: GameMaster, players: Dict[str, "Player"], channel: Channel,
         if obs.inbox:  # without its own earlier messages a player repeats itself (seen in 20Q dry run)
             obs.dialogue = gm.dialogue(role)
         move = players[role].act(obs)
+        rejected, violation = [], None
+        validate = getattr(gm, "validate", None)
+        while validate is not None and move.kind == "message":
+            violation = validate(role, move.content)
+            if violation is None or len(rejected) == MAX_REWRITES:
+                break
+            rejected.append({"text": move.content, "reason": violation})
+            obs.feedback = violation
+            move = players[role].act(obs)
+        if move.kind != "message":
+            violation = None
         check = lid(move.content, gm.roles[role]) if (lid and move.kind == "message") else None
         if move.kind == "message":
             out = channel.translate(move.content, gm.roles[role], gm.roles[gm.other(role)], history=gm.history())
             gm.apply(role, move, out, check)
         else:
             gm.apply(role, move, lid=check)
+        gm.turns[-1].rejected, gm.turns[-1].violation = rejected, violation
     rec = gm.record()
     rec["channel"] = channel.name
     rec["finished"] = gm.is_done()

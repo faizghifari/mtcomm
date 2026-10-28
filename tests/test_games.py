@@ -254,7 +254,7 @@ def test_players_see_their_own_earlier_messages():
     assert "You: Q1?" in prompt and "Partner: Henteu" in prompt
 
 
-@pytest.mark.parametrize("game", ["image", "culture", "mcq", "twentyq", "sequence", "sequence_step"])
+@pytest.mark.parametrize("game", ["image", "culture", "mcq", "twentyq", "sequence", "sequence_step", "route"])
 def test_every_dialogue_game_shows_history(game):
     """At every turn a player sees every message sent so far (its own included); only MuG-Eval's MCQ
     answerer is reset per question, as in MuG-Eval's mcqa_gen_answer.py."""
@@ -280,6 +280,10 @@ def test_every_dialogue_game_shows_history(game):
                 "own_culture_idx": "B", "local_place": "Bandung", "visitor_own_culture": "Indonesia",
                 "local_knowledge": [{"question": "q", "answers": [{"answers": ["a"], "count": 3}]}]}
         gm, roles = BlendLocalVisitorGame(item, "su", "jv", max_questions=3, min_questions=1), ["visitor", "local"]
+    elif game == "route":
+        from mtcomm.games.route import RouteGame
+
+        gm, roles = RouteGame(_route_item(), "en", "en"), ["giver", "follower"]
     elif game.startswith("sequence"):
         from mtcomm.games.sequence import SequenceGame
 
@@ -356,3 +360,50 @@ def test_sequence_stepwise_turns_and_answer_gate():
     gm.apply("arranger", Move("answer", "2, 3, 1"))
     s = gm.score()
     assert s["correct"] and s["narrator_messages"] == 4 and s["messages_over_word_limit"] == 0
+
+
+def _route_item():
+    from mtcomm.data import load_route_items
+
+    items = load_route_items()
+    return next(it for it in items if it["map"]["level"] == "hard")
+
+
+def test_route_giver_filter_rejects_lists_and_accepts_narration():
+    from mtcomm.games.route import RouteGame
+
+    it = _route_item()
+    gm = RouteGame(it, "en", "en")
+    names = [l["name"] for l in it["map"]["giver_landmarks"]]
+    assert gm.validate("giver", f"{names[0]} -> {names[1]} -> {names[2]}") is not None  # arrows
+    assert gm.validate("giver", f"1. {names[0]}\n2. {names[1]}") is not None  # list
+    assert gm.validate("giver", "go to C7 then up") is not None  # grid code
+    assert gm.validate("giver", f"{names[0]}, {names[1]}, {names[2]}, {names[3]}") is not None  # too many names
+    assert gm.validate("giver", " ".join(["walk"] * 30)) is not None  # too long
+    ok = f"From the start walk up and keep the {names[0]} on your left, then turn right."
+    assert gm.validate("giver", ok) is None
+    assert gm.validate("follower", "a -> b") is None  # only the giver is restricted
+
+
+def test_route_rewrite_loop_and_scoring():
+    from mtcomm.games.route import RouteGame
+
+    it = _route_item()
+    gm = RouteGame(it, "en", "en", extra_messages=0)
+    gold = it["map"]["gold_answer"]
+    answer = "\n".join(f"cell {g['cell']}" if "cell" in g else f"{g['landmark']}, {g['side']}" for g in gold)
+    n = gm.n_steps
+    giver = ScriptedPlayer([Move("message", "a -> b"), Move("message", "Go up and keep the pond on your left.")]
+                           + [Move("message", "Keep going the same way.")] * (n - 1))
+    follower = ScriptedPlayer([Move("message", "ok")] * (n - 1) + [Move("answer", answer)])
+    rec = run_episode(gm, {"giver": giver, "follower": follower}, IdentityChannel(), max_moves=60)
+    first = rec["turns"][0]
+    assert first["source"].startswith("Go up") and first["rejected"][0]["text"] == "a -> b"
+    assert all("->" not in (t["delivered"] or "") for t in rec["turns"] if t["kind"] == "message")
+    assert rec["score"]["correct"] is True and rec["score"]["giver_rewrites"] == 1
+    assert rec["score"]["giver_violations"] == 0
+    # One side flipped -> not a success, but most steps right.
+    flipped = answer.replace(", left", ", RIGHTX", 1).replace("RIGHTX", "right")
+    gm2 = RouteGame(it, "en", "en", allow_message=False)
+    gm2.apply("follower", Move("answer", flipped))
+    assert gm2.score()["correct"] is False and gm2.score()["step_accuracy"] >= 0.8

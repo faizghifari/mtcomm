@@ -10,6 +10,7 @@ Usage: python -m mtcomm.data     (prints item counts)
 """
 
 import csv
+import hashlib
 import json
 import random
 from collections import Counter
@@ -298,4 +299,57 @@ def load_sequence_items(seed: int = 0, manifest_path=None) -> List[dict]:
         items.append({"item_id": f"S{i + 1:02d}", "story_id": s["story_id"], "title": s["title"],
                       "licence": s["licence"], "story": story, "shuffled": shuffled,
                       "gold": [shuffled.index(p) + 1 for p in story]})
+    return items
+
+
+# ---------------------------------------------------------------- route redrawing (synthetic maps)
+
+ROUTE_MAPS = DATA_ROOT / "derived" / "route" / "maps_v1.json"
+ROUTE_LEXICON_DIR = ANNOTATION_DIR / "route_lexicon"
+
+
+def _route_lexicon() -> dict:
+    """The checked lexicon when it exists, else the draft (English needs neither)."""
+    for name in ["lexicon_final.json", "lexicon_draft.json"]:
+        p = ROUTE_LEXICON_DIR / name
+        if p.exists():
+            return json.loads(p.read_text(encoding="utf-8"))
+    return {"landmarks": {}, "attributes": {}, "directions": {}}
+
+
+def route_label(name: str, lang: str, lex: dict) -> str:
+    """'well (broken)' -> the landmark and attribute words in `lang`."""
+    if lang == "en":
+        return name
+    base, _, attr = name.partition(" (")
+    out = lex["landmarks"][base][lang]
+    return f"{out} ({lex['attributes'][attr.rstrip(')')][lang]})" if attr else out
+
+
+def load_route_items(langs=("en",), maps_path=None) -> List[dict]:
+    """Route items with labels and map images for each language in `langs` (images drawn on first use)."""
+    from .routemap import draw_picture
+
+    doc = json.loads(Path(maps_path or ROUTE_MAPS).read_text(encoding="utf-8"))
+    lex = _route_lexicon()
+    img_dir = Path(maps_path or ROUTE_MAPS).parent / "images"
+    img_dir.mkdir(parents=True, exist_ok=True)
+    items = []
+    for m in doc["maps"]:
+        names = {l["name"] for l in m["giver_landmarks"] + m["follower_landmarks"]}
+        it = {"item_id": m["map_id"], "map": m, "labels": {}, "giver_image": {}, "follower_image": {},
+              "directions": {}}
+        for lang in langs:
+            labels = {n: route_label(n, lang, lex) for n in names}
+            it["labels"][lang] = labels
+            it["directions"][lang] = ({"left": "left", "right": "right"} if lang == "en" else
+                                      {k: lex["directions"][k][lang] for k in ("left", "right")})
+            # The label hash in the name keeps images drawn from an older lexicon from being reused.
+            tag = hashlib.sha256(json.dumps(labels, sort_keys=True, ensure_ascii=False).encode()).hexdigest()[:8]
+            for who in ("giver", "follower"):
+                p = img_dir / f"{m['map_id']}_{who}_{lang}_{tag}.png"
+                if not p.exists():
+                    draw_picture(m, who, p, label=labels.get, plain=True)
+                it[f"{who}_image"][lang] = str(p)
+        items.append(it)
     return items
