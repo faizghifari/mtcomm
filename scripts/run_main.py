@@ -86,7 +86,7 @@ class Channels:
                 ch = GoogleWebChannel()
             elif cond in PIVOTS:
                 ch = PivotChannel(self.get(cond.split("-")[0]), "id")
-            elif cond == "ceiling":
+            elif cond in ("ceiling", "passthrough"):
                 ch = IdentityChannel()
             elif cond == "prior":
                 ch = NoChannel()
@@ -101,6 +101,16 @@ def conditions(a, b):
     if {a, b} == {"su", "jv"}:
         conds += PIVOTS
     return conds
+
+
+# Passthrough: each player keeps its own language but messages arrive untranslated. Success there means the
+# receiver partly reads the sender's language, so translated scores on that pair overstate what MT adds.
+ONLY_CONDS = None  # --conds; None = every condition except passthrough
+
+
+def all_conds(a, b):
+    conds = conditions(a, b) + ["ceiling", "prior", "passthrough"]
+    return [c for c in conds if (c in ONLY_CONDS if ONLY_CONDS else c != "passthrough")]
 
 
 # v2 (prior wrong and passage right, in su/jv/ko) once built; v1 (prior wrong only) was used by run main_mcq.
@@ -136,7 +146,7 @@ def episodes(opts):
         items = load_image_items("hard", manifest_path=PERTURB_MANIFEST)[:n]
         for a, b in pairs:
             for it in items:
-                for cond in conditions(a, b) + ["ceiling", "prior"]:
+                for cond in all_conds(a, b):
                     da = b if cond == "ceiling" else a
                     yield from emit("image", f"{a}-{b}", cond, b, it["item_id"],
                                     lambda it=it, da=da, b=b, cond=cond: (
@@ -147,7 +157,7 @@ def episodes(opts):
         items = load_sequence_items()[:n]
         for a, b in pairs:
             for it in items:
-                for cond in conditions(a, b) + ["ceiling", "prior"]:
+                for cond in all_conds(a, b):
                     na = b if cond == "ceiling" else a
                     yield from emit(task, f"{a}-{b}", cond, b, it["item_id"],
                                     lambda it=it, na=na, b=b, cond=cond, task=task: (
@@ -162,7 +172,7 @@ def episodes(opts):
         items = (easy[:(n + 1) // 2] if level != "hard" else []) + (hard[:n // 2] if level != "easy" else [])
         for a, b in pairs:
             for it in items:
-                for cond in conditions(a, b) + ["ceiling", "prior"]:
+                for cond in all_conds(a, b):
                     ga = b if cond == "ceiling" else a
                     yield from emit("route", f"{a}-{b}", cond, b, it["item_id"],
                                     lambda it=it, ga=ga, b=b, cond=cond: (
@@ -173,7 +183,7 @@ def episodes(opts):
         if task not in tasks:
             continue
         for a, b in pairs:
-            for cond in conditions(a, b) + ["ceiling", "prior"]:
+            for cond in all_conds(a, b):
                 lb = a if cond == "ceiling" else b
                 for it in task_items(task, load, a, lb, n):
                     yield from emit(task, f"{a}-{b}", cond, a, it["item_id"],
@@ -190,7 +200,7 @@ def episodes(opts):
             items = [it for it in blend if it["visitor_lang"] == v and it["local_culture"] == culture
                      and len({o.strip().lower() for o in it["options"].values()}) == len(it["options"])][:n]
             for it in items:
-                for cond in conditions(local_lang, v) + ["ceiling", "prior"]:
+                for cond in all_conds(local_lang, v):
                     ll = v if cond == "ceiling" else local_lang
                     yield from emit("culture", f"{culture}>{v}", cond, v, it["item_id"],
                                     lambda it=it, ll=ll, v=v, cond=cond: (
@@ -413,7 +423,10 @@ def main():
     ap.add_argument("--loop", action="store_true")
     ap.add_argument("--interval", type=int, default=120)
     ap.add_argument("--route-level", default="both", choices=["both", "easy", "hard"])
+    ap.add_argument("--conds", nargs="*", default=None, help="only these conditions (e.g. passthrough)")
     args = ap.parse_args()
+    global ONLY_CONDS
+    ONLY_CONDS = args.conds
     pairs = [tuple(p.split("-")) for p in args.pairs] if args.pairs else PAIRS
     opts = {"run_dir": OUTPUT_ROOT / args.run, "tasks": args.tasks, "pairs": pairs, "n": args.n,
             "route_level": args.route_level}
