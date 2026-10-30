@@ -18,8 +18,8 @@ from mtcomm.paths import OUTPUT_ROOT
 from mtcomm.players import NOT_UNDERSTOOD, is_not_understood
 
 OUT = OUTPUT_ROOT / "analysis_main2"
-RUNS = ["main2_mcq", "main2_image", "main2_culture", "main2_twentyq", "main2_route", "main2_sequence"]
-ROBUST = {"mcq": ["main2_mcq", "main2r_flash_mcq", "main2r_qwen_mcq"], "image": ["main2_image", "main2r_qwen_image"]}
+RUNS = ["main2_mcq", "main2_image", "main2f_image", "main2_culture", "main2_twentyq", "main2_route", "main2_sequence"]
+ROBUST = {"mcq": ["main2_mcq", "main2r_flash_mcq", "main2r_qwen_mcq"], "image": ["main2f_image", "main2_image", "main2r_qwen_image"]}
 TRANSLATORS = ["sol", "flash-lite", "nllb", "google", "qwen"]
 ORDER = TRANSLATORS + ["nllb-id", "google-id", "passthrough", "ceiling", "prior"]
 
