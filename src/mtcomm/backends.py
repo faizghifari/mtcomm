@@ -13,6 +13,7 @@ Generation settings are explicit and recorded with every request (`config()`):
 import base64
 import io
 import json
+import itertools
 import os
 import time
 from functools import lru_cache
@@ -383,9 +384,44 @@ class LocalBackend(Backend):
         return self._done[job]
 
 
+class TacoBackend(LocalBackend):
+    """Qwen3.8-27B served by llama-server on taco (OpenAI-compatible, free). `model` is "taco:<name>";
+    thinking is turned off through the chat template. Requests alternate over the servers in TACO_URLS
+    (comma-separated; default: GPUs 0-3 on the published port 10080, GPUs 4-7 through an SSH tunnel on
+    local port 10082, used only while the tunnel is up)."""
+
+    provider = "taco"
+    _rr = itertools.count()
+
+    def __init__(self, model: str, max_tokens: int = 1024, json_mode: bool = True, workers: int = 4):
+        super().__init__(model, max_tokens=max_tokens, json_mode=json_mode, workers=workers, reasoning_effort=None)
+        urls = os.environ.get("TACO_URLS", "http://143.248.188.121:10080/v1,http://localhost:10082/v1")
+        self.urls = [u.rstrip("/") for u in urls.split(",") if self._up(u)] or [urls.split(",")[0].rstrip("/")]
+
+    @staticmethod
+    def _up(url):
+        import requests
+
+        try:
+            return requests.get(url.rstrip("/").removesuffix("/v1") + "/health", timeout=5).status_code == 200
+        except requests.RequestException:
+            return False
+
+    def base_url(self) -> str:
+        return self.urls[next(self._rr) % len(self.urls)]
+
+    def build(self, prompt, system_prompt, images):
+        req = super().build(prompt, system_prompt, images)
+        req["chat_template_kwargs"] = {"enable_thinking": False}
+        return req
+
+
 def make_backend(model: str, **kw) -> Backend:
     if model.startswith("local:"):
         return LocalBackend(model, **kw)
+    if model.startswith("taco:"):
+        kw.pop("reasoning_effort", None)
+        return TacoBackend(model, **kw)
     if model.startswith("gemini"):
         return GeminiBackend(model, **kw)
     if model.startswith("gpt"):

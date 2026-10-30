@@ -57,11 +57,11 @@ TASKS = ["image", "mcq", "twentyq", "culture", "sequence", "sequence_step", "rou
 PAIRS = [("su", "jv"), ("jv", "su"), ("su", "ko"), ("ko", "su")]
 # Culture: (local culture, visitor language); the local speaks the culture's language.
 CULTURE_PAIRS = [("West_Java", "jv"), ("West_Java", "ko"), ("South_Korea", "su")]
-TRANSLATORS = ["sol", "flash-lite", "nllb", "google"]
+TRANSLATORS = ["sol", "flash-lite", "nllb", "google", "qwen"]
 PIVOTS = ["nllb-id", "google-id"]  # su<->jv only
 # USD per million tokens (input, output); batch is half. Gemini 3.8 Flash doubles from 2027-01-01.
 PRICES = {"gemini-3.8-flash": (0.75, 3.75), "gemini-3.1-flash-lite": (0.25, 1.50), "gpt-6.1-sol": (2.0, 10.0)}
-TRANSLATOR_MODELS = {"sol": "gpt-6.1-sol", "flash-lite": "gemini-3.1-flash-lite"}
+TRANSLATOR_MODELS = {"sol": "gpt-6.1-sol", "flash-lite": "gemini-3.1-flash-lite", "qwen": "taco:qwen3.8-27b"}
 
 
 def log(msg):
@@ -114,6 +114,8 @@ GIVEN_WORDS = False  # --answer-words: the MCQ answerer is given its yes/no/mayb
 # any other language with a fixed "I don't understand" (players.NOT_UNDERSTOOD); their own messages in another
 # language are rejected and rewritten. Local players are left as they are.
 MONOLINGUAL = False
+# --seq-manifest / --seq-words / --seq-questions: sequence variants (calibration of the story budget)
+SEQ = {"manifest": None, "max_words": 60, "max_questions": 3}
 
 
 def all_conds(a, b):
@@ -162,7 +164,7 @@ def episodes(opts):
                                                      max_questions=3 if cond != "prior" else 0),
                                         ["describer", "guesser"]))
     for task in [t for t in ("sequence", "sequence_step") if t in tasks]:
-        items = load_sequence_items()[:n]
+        items = load_sequence_items(manifest_path=SEQ["manifest"])[:n]
         for a, b in pairs:
             for it in items:
                 for cond in all_conds(a, b):
@@ -170,7 +172,8 @@ def episodes(opts):
                     yield from emit(task, f"{a}-{b}", cond, b, it["item_id"],
                                     lambda it=it, na=na, b=b, cond=cond, task=task: (
                                         SequenceGame(it, na, b, allow_message=cond != "prior",
-                                                     stepwise=task == "sequence_step"),
+                                                     stepwise=task == "sequence_step", max_words=SEQ["max_words"],
+                                                     max_questions=SEQ["max_questions"]),
                                         ["narrator", "arranger"]))
     if "route" in tasks:
         items = load_route_items(langs=sorted({x for p in pairs for x in p}))
@@ -448,8 +451,12 @@ def main():
     ap.add_argument("--answer-words", action="store_true", help="give the MCQ answerer its yes/no/maybe words")
     ap.add_argument("--player", default=PLAYER, help="API player model (default gemini-3.8-flash)")
     ap.add_argument("--monolingual", action="store_true", help="players understand only their own language")
+    ap.add_argument("--seq-manifest", default=None, help="sequence stories (default: newest manifest_seq_v*.json)")
+    ap.add_argument("--seq-words", type=int, default=60, help="word budget for the sequence story")
+    ap.add_argument("--seq-questions", type=int, default=3, help="arranger questions in the sequence game")
     args = ap.parse_args()
     ONLY_CONDS, GIVEN_WORDS, PLAYER, MONOLINGUAL = args.conds, args.answer_words, args.player, args.monolingual
+    SEQ.update(manifest=args.seq_manifest, max_words=args.seq_words, max_questions=args.seq_questions)
     PLAYERS.update(p.split("=", 1) for p in args.players)
     pairs = [tuple(p.split("-")) for p in args.pairs] if args.pairs else PAIRS
     opts = {"run_dir": OUTPUT_ROOT / args.run, "tasks": args.tasks, "pairs": pairs, "n": args.n,
@@ -467,7 +474,7 @@ def main():
         json.dump({"player": backend.config(), "players": {c: backends[m].config() for c, m in PLAYERS.items()},
                    "tasks": args.tasks, "pairs": pairs, "n": args.n,
                    "route_level": args.route_level, "translators": TRANSLATORS, "pivots": PIVOTS,
-                   "monolingual": MONOLINGUAL, "conds": ONLY_CONDS}, f, indent=1, default=str)
+                   "monolingual": MONOLINGUAL, "conds": ONLY_CONDS, "sequence": SEQ}, f, indent=1, default=str)
     cache = ReplayCache(opts["run_dir"] / "cache.jsonl")
     if args.cmd == "batch":
         return cmd_batch(opts, backend, cache, args.loop, args.interval)

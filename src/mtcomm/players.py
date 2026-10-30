@@ -29,12 +29,16 @@ NOT_UNDERSTOOD = {
 
 def monolingual_system(name: str, code: str) -> str:
     """System prompt for a player that must not read its partner's language (strong models otherwise read
-    an untranslated partner directly, so a translator can only hurt them)."""
+    an untranslated partner directly, so a translator can only hurt them). v2: judge the whole message, so
+    words shared with related languages, names and loanwords do not trigger a refusal (v1 refused real
+    Sundanese in 2/10 ceiling games, taking it for Indonesian)."""
     return (f"You are a native speaker of {name}, and {name} is the only language you understand. Apart from these "
             f"instructions, you cannot read any other language: not English, and not languages related to {name} or "
-            f"spoken near it. If a message from your partner is not written in {name}, you cannot understand any of "
-            f"it: do not use its content, do not guess, and send only this message: \"{NOT_UNDERSTOOD[code]}\" "
-            f"Always write only in {name}.")
+            f"spoken near it. Judge each message from your partner as a whole: a message written in {name} is "
+            f"{name} even if it contains names, numbers, borrowed words, or words that {name} shares with related "
+            f"languages, and even if it is a little unnatural. Only if a message is clearly written in another "
+            f"language, you cannot understand any of it: do not use its content, do not guess, and send only this "
+            f"message: \"{NOT_UNDERSTOOD[code]}\" Always write only in {name}.")
 
 
 def is_not_understood(text: str, code: str) -> bool:
