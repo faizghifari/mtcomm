@@ -26,7 +26,7 @@ from pathlib import Path
 from mtcomm.paths import OUTPUT_ROOT
 
 OUT = OUTPUT_ROOT / "metrics"
-TRANSLATED = {"sol", "flash-lite", "nllb", "google", "nllb-id", "google-id"}
+TRANSLATED = {"sol", "flash-lite", "nllb", "google", "qwen", "nllb-id", "google-id"}
 MODELS = ["cometkiwi", "xcomet"]  # xcomet needs more RAM than this machine has (see comet_score.py)
 
 
@@ -197,7 +197,10 @@ def main():
     ap.add_argument("--runs", nargs="*", default=["main_image", "main_mcq"])
     ap.add_argument("--batch-size", type=int, default=16)
     ap.add_argument("--models", nargs="*", default=["cometkiwi"])
+    ap.add_argument("--out", default="metrics", help="output dir under outputs/mtcomm (e.g. metrics2 for the main2 runs)")
     args = ap.parse_args()
+    global OUT
+    OUT = OUTPUT_ROOT / args.out
     if args.cmd == "export":
         export(args.runs)
     elif args.cmd == "comet":
