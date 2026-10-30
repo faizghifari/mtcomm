@@ -17,13 +17,13 @@ import json
 MODEL_REGISTRY = {"cometkiwi": "Unbabel/wmt22-cometkiwi-da", "xcomet": "Unbabel/XCOMET-XL"}
 
 
-def run_model(name, rows, batch_size):
+def run_model(name, rows, batch_size, gpus=1):
     import torch
     from comet import download_model, load_from_checkpoint
 
     model = load_from_checkpoint(download_model(MODEL_REGISTRY[name]))
     out = model.predict([{"src": r["source_text"], "mt": r["post_edit"]} for r in rows],
-                        batch_size=batch_size, gpus=1)
+                        batch_size=batch_size, gpus=gpus)
     spans = None
     meta = getattr(out, "metadata", None)
     if meta is not None and getattr(meta, "error_spans", None) is not None:
@@ -40,11 +40,12 @@ def main():
     ap.add_argument("out")
     ap.add_argument("--models", nargs="*", default=["cometkiwi", "xcomet"])
     ap.add_argument("--batch-size", type=int, default=16)
+    ap.add_argument("--gpus", type=int, default=1, help="0 = CPU (XCOMET-XL on taco, whose GPUs serve Qwen)")
     args = ap.parse_args()
     rows = [json.loads(line) for line in open(args.inp, encoding="utf-8") if line.strip()]
     res = [{"record_id": r["record_id"]} for r in rows]
     for name in args.models:
-        scores, spans = run_model(name, rows, args.batch_size)
+        scores, spans = run_model(name, rows, args.batch_size, args.gpus)
         for i, s in enumerate(scores):
             res[i][f"{name}_score"] = s
             if spans is not None:
