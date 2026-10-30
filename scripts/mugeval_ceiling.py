@@ -9,6 +9,9 @@ player must clear before its passthrough or translated results mean anything; th
 screened for Gemini in the main runs. Twenty Questions uses the 100-candidate easy setting, with the
 entity given to the answerer in L, as in MuG-Eval (su/jv words: native check pending).
 
+API models (gemini-*, gpt-*) run the same screen as an anchor: the opening calls and the single-call
+priors go through the batch API first (half price), then the dependent turns run synchronously.
+
 Usage: python scripts/mugeval_ceiling.py run --model exaone-3.5-7.8b-instruct --lang ko [--task twentyq] [--n 50]
        [--ctx 16384 --retry-errors]  (re-asks calls that failed, e.g. on context overflow; answered calls replay)
        python scripts/mugeval_ceiling.py report
@@ -17,35 +20,81 @@ Usage: python scripts/mugeval_ceiling.py run --model exaone-3.5-7.8b-instruct --
 import argparse
 import json
 import subprocess
+import sys
+import time
 from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 from mtcomm import lid
-from mtcomm.backends import LocalBackend
+from mtcomm.backends import LocalBackend, make_backend
 from mtcomm.channels import IdentityChannel
 from mtcomm.data_mugeval import load_mcq_items, load_twentyq_items
 from mtcomm.game import run_episode
 from mtcomm.games.mugeval import MCQConversationGame, TwentyQuestionsGame
 from mtcomm.paths import OUTPUT_ROOT
 from mtcomm.players import LLMPlayer
-from mtcomm.replay import ReplayCache, SyncGenerate
+from mtcomm.replay import BatchGenerate, CallFailed, Pending, ReplayCache, SyncGenerate
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from run_main import PRICES, _tokens  # noqa: E402
 
 OUT = OUTPUT_ROOT / "mugeval_ceiling"
 LMS = "/mnt/c/Users/user/.lmstudio/bin/lms.exe"
 TASKS = {"mcq": (MCQConversationGame, load_mcq_items), "twentyq": (TwentyQuestionsGame, load_twentyq_items)}
+API = ("gemini", "gpt")
 
 
 def records_path(d, task):
     return d / ("records.jsonl" if task == "mcq" else f"records_{task}.jsonl")
 
 
+def batch_openings(be, eps, play, cache, workdir):
+    """Opening calls and single-call priors through the batch API; later turns stay synchronous."""
+    pending = {}
+    for ep in eps:
+        try:
+            play(ep, lambda eid, role: BatchGenerate(be, cache, eid, role, pending))
+        except (Pending, CallFailed):
+            pass
+    if not pending:
+        return
+    job = be.submit([(k, v["request"]) for k, v in pending.items()], workdir)
+    print(f"submitted {len(pending)} opening calls -> {job}", flush=True)
+    while (st := be.status(job)) == "running":
+        time.sleep(60)
+    res = be.results(job) if st == "succeeded" else {}
+    for k, v in pending.items():
+        r = res.get(k, {"error": f"batch {st}"})
+        rec = {"key": k, "request_hash": v["request_hash"], "model": be.model, "mode": "batch", "usage": r.get("usage")}
+        if "text" in r:
+            rec["text"] = r["text"]
+        else:
+            rec.update(error=r["error"], attempts=v["attempts"] + 1)
+        cache.put(rec)
+
+
+def spend(cache):
+    """USD from the cache's usage records (batch calls at half price); local models are free."""
+    total = 0.0
+    for r in cache.records.values():
+        pi, po = PRICES.get(r.get("model"), (0, 0))
+        i, o = _tokens(r.get("usage"))
+        total += (0.5 if r.get("mode") == "batch" else 1.0) * (i * pi + o * po) / 1e6
+    return total
+
+
 def run(args):
     d = OUT / args.model
     d.mkdir(parents=True, exist_ok=True)
-    subprocess.run([LMS, "unload", "--all"], capture_output=True)
-    subprocess.run([LMS, "load", args.model, "--gpu", "max", "-c", str(args.ctx), "--parallel", str(args.workers), "-y"],
-                   check=True, capture_output=True)
-    be = LocalBackend(f"local:{args.model}", workers=args.workers)
+    api = args.model.startswith(API)
+    if api:
+        be = make_backend(args.model)
+    else:
+        subprocess.run([LMS, "unload", "--all"], capture_output=True)
+        subprocess.run([LMS, "load", args.model, "--gpu", "max", "-c", str(args.ctx), "--parallel", str(args.workers),
+                        "-y"], check=True, capture_output=True)
+        be = LocalBackend(f"local:{args.model}", workers=args.workers)
     cache = ReplayCache(d / "cache.jsonl")
     if args.retry_errors:
         cache.records = {k: r for k, r in cache.records.items() if "text" in r}
@@ -53,17 +102,26 @@ def run(args):
     eps = [(L, cond, it) for L in args.lang for it in load(L, L, n=args.n, seed=args.seed)
            for cond in ("ceiling", "prior")]
 
-    def one(ep):
+    def play(ep, make_gen):
         L, cond, it = ep
         eid = f"{args.task}|{cond}|{L}|{it['item_id']}"
         gm = Game(it, L, L, allow_message=cond == "ceiling", original=True)
-        players = {r: LLMPlayer(SyncGenerate(be, cache, eid, r), be.model) for r in ("questioner", "answerer")}
+        players = {r: LLMPlayer(make_gen(eid, r), be.model) for r in ("questioner", "answerer")}
+        return run_episode(gm, players, IdentityChannel(), lid=lid.check, max_moves=50)
+
+    if api:
+        (d / f"batch_{args.task}").mkdir(exist_ok=True)
+        batch_openings(be, eps, play, cache, d / f"batch_{args.task}")
+
+    def one(ep):
+        L, cond, it = ep
         try:
-            rec = run_episode(gm, players, IdentityChannel(), lid=lid.check, max_moves=50)
+            rec = play(ep, lambda eid, role: SyncGenerate(be, cache, eid, role))
             rec.update(status="done")
         except Exception as e:
             rec = {"status": "error", "error": f"{type(e).__name__}: {e}"[:300]}
-        rec.update(episode=eid, model=args.model, task=args.task, lang=L, cond=cond)
+        rec.update(episode=f"{args.task}|{cond}|{L}|{it['item_id']}", model=args.model, task=args.task, lang=L,
+                   cond=cond)
         return rec
 
     with ThreadPoolExecutor(args.workers) as ex:
@@ -71,7 +129,8 @@ def run(args):
     with open(records_path(d, args.task), "w") as f:
         for r in recs:
             f.write(json.dumps(r, ensure_ascii=False, default=str) + "\n")
-    print(f"{args.model} {args.task}: {len(recs)} episodes, {sum(r['status'] != 'done' for r in recs)} errors")
+    print(f"{args.model} {args.task}: {len(recs)} episodes, {sum(r['status'] != 'done' for r in recs)} errors, "
+          f"spend so far ${spend(cache):.2f}")
 
 
 def report(args):
