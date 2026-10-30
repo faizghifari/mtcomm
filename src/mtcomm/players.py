@@ -17,6 +17,31 @@ ACTION_FORMAT = (
 )
 
 
+# What a monolingual player says when a message is not in its language. [su/jv: native check pending]
+NOT_UNDERSTOOD = {
+    "su": "Hapunten, abdi teu ngartos. Mangga nyarios nganggo basa Sunda.",
+    "jv": "Nyuwun sewu, kula mboten mangertos. Mangga ngendika nganggo basa Jawa.",
+    "ko": "죄송하지만 이해하지 못했어요. 한국어로 말해 주세요.",
+    "id": "Maaf, saya tidak mengerti. Silakan bicara dalam bahasa Indonesia.",
+    "en": "Sorry, I don't understand. Please speak English.",
+}
+
+
+def monolingual_system(name: str, code: str) -> str:
+    """System prompt for a player that must not read its partner's language (strong models otherwise read
+    an untranslated partner directly, so a translator can only hurt them)."""
+    return (f"You are a native speaker of {name}, and {name} is the only language you understand. Apart from these "
+            f"instructions, you cannot read any other language: not English, and not languages related to {name} or "
+            f"spoken near it. If a message from your partner is not written in {name}, you cannot understand any of "
+            f"it: do not use its content, do not guess, and send only this message: \"{NOT_UNDERSTOOD[code]}\" "
+            f"Always write only in {name}.")
+
+
+def is_not_understood(text: str, code: str) -> bool:
+    norm = lambda s: re.sub(r"[^\w]+", " ", s).strip().casefold()  # noqa: E731
+    return norm(NOT_UNDERSTOOD[code].split(".")[0]) in norm(text or "")
+
+
 class Player(ABC):
     @abstractmethod
     def act(self, obs: Observation) -> Move: ...
@@ -64,8 +89,9 @@ class LLMPlayer(Player):
     mt-eval's text providers and mtcomm's vision provider plug in the same way.
     """
 
-    def __init__(self, generate: Callable[[str, Optional[str], List[str]], str], label: str):
-        self.generate, self.label = generate, label
+    def __init__(self, generate: Callable[[str, Optional[str], List[str]], str], label: str,
+                 system: Optional[str] = None):
+        self.generate, self.label, self.system = generate, label, system
 
     def prompt(self, obs: Observation) -> str:
         parts = [obs.instructions]
@@ -89,7 +115,7 @@ class LLMPlayer(Player):
         return "\n\n".join(parts)
 
     def act(self, obs):
-        raw = self.generate(self.prompt(obs), None, obs.images)
+        raw = self.generate(self.prompt(obs), self.system, obs.images)
         return parse_action(raw, obs)
 
 

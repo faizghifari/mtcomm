@@ -43,7 +43,8 @@ from mtcomm.games.mugeval import MCQConversationGame, TwentyQuestionsGame
 from mtcomm.games.route import RouteGame
 from mtcomm.games.sequence import SequenceGame
 from mtcomm.paths import DATA_ROOT, OUTPUT_ROOT
-from mtcomm.players import LLMPlayer
+from mtcomm.languages import get as lang_info
+from mtcomm.players import NOT_UNDERSTOOD, LLMPlayer, is_not_understood, monolingual_system
 from mtcomm.replay import BatchGenerate, CachedChannel, CallFailed, Pending, ReplayCache, SyncGenerate
 
 PLAYER = "gemini-3.8-flash"
@@ -109,6 +110,10 @@ def conditions(a, b):
 # receiver partly reads the sender's language, so translated scores on that pair overstate what MT adds.
 ONLY_CONDS = None  # --conds; None = every condition except passthrough
 GIVEN_WORDS = False  # --answer-words: the MCQ answerer is given its yes/no/maybe words (small local players)
+# --monolingual: API players are told they understand only their own language and must answer a message in
+# any other language with a fixed "I don't understand" (players.NOT_UNDERSTOOD); their own messages in another
+# language are rejected and rewritten. Local players are left as they are.
+MONOLINGUAL = False
 
 
 def all_conds(a, b):
@@ -219,8 +224,11 @@ def build(ep, make_gen):
     opening request is the same in every condition. Later roles' first calls depend on the channel."""
     gm, roles = ep["build"]()
     opener = gm.next_role()
+    def system(code):
+        return monolingual_system(lang_info(code).name, code) if MONOLINGUAL and code not in PLAYERS else None
+
     return gm, {role: LLMPlayer(make_gen(role, gm.roles[role], share_first=(role == opener)),
-                                PLAYERS.get(gm.roles[role], PLAYER)) for role in roles}
+                                PLAYERS.get(gm.roles[role], PLAYER), system(gm.roles[role])) for role in roles}
 
 
 def run_one(ep, backends, cache, chans, mode, pending=None):
@@ -235,7 +243,7 @@ def run_one(ep, backends, cache, chans, mode, pending=None):
     gm, players = build(ep, make_gen)
     # In the batch phase an uncached translation is left for `dialogue` (translators are synchronous).
     channel = CachedChannel(chans.get(ep["cond"]), cache, ep["id"], offline=(mode == "batch"))
-    rec = run_episode(gm, players, channel, lid=lid.check, max_moves=50)
+    rec = run_episode(gm, players, channel, lid=lid.check, max_moves=50, lang_reject=MONOLINGUAL)
     rec.update(episode=ep["id"], task=ep["task"], pair=ep["pair"], cond=ep["cond"], eval_lang=ep["eval_lang"],
                model={r: PLAYERS.get(c, PLAYER) for r, c in gm.roles.items()} if PLAYERS else PLAYER, status="done")
     return rec
@@ -387,7 +395,7 @@ def cost(opts):
 def cmd_report(opts):
     p = opts["run_dir"] / "records.jsonl"
     recs = [json.loads(line) for line in open(p)] if p.exists() else []
-    cell = defaultdict(lambda: {"n": 0, "ok": 0, "err": 0, "turns": 0, "lid_n": 0, "lid_ok": 0})
+    cell = defaultdict(lambda: {"n": 0, "ok": 0, "err": 0, "turns": 0, "lid_n": 0, "lid_ok": 0, "refused": 0})
     for r in recs:
         c = cell[(r["task"], r["eval_lang"] if r["cond"] in ("ceiling", "prior") else r["pair"], r["cond"])]
         c["n"] += 1
@@ -397,6 +405,7 @@ def cmd_report(opts):
         c["ok"] += bool(r["score"].get("correct"))
         msgs = [t for t in r["turns"] if t["kind"] == "message"]
         c["turns"] += len(msgs)
+        c["refused"] += sum(any(is_not_understood(t["source"], k) for k in NOT_UNDERSTOOD) for t in msgs)
         for t in msgs:
             if t.get("lid") and len(t["source"].split()) >= 3:  # GlotLID is unreliable on "Henteu." etc.
                 c["lid_n"] += 1
@@ -407,6 +416,7 @@ def cmd_report(opts):
         rows.append({"task": task, "pair": pair, "cond": cond, "n": c["n"], "errors": c["err"],
                      "success": round(c["ok"] / done, 3) if done else None,
                      "msgs_per_game": round(c["turns"] / done, 1) if done else None,
+                     "refusal_rate": round(c["refused"] / c["turns"], 3) if c["turns"] else None,
                      "lid_pass": round(c["lid_ok"] / c["lid_n"], 3) if c["lid_n"] else None})
     spend, toks = cost(opts)
     out = {"cells": rows, "spend_usd": {k: round(v, 4) for k, v in spend.items()},
@@ -415,13 +425,14 @@ def cmd_report(opts):
     json.dump(out, open(opts["run_dir"] / "summary.json", "w"), indent=1)
     for r in rows:
         print(f"{r['task']:8s} {r['pair']:16s} {r['cond']:10s} n={r['n']:3d} err={r['errors']:2d} "
-              f"success={r['success']} msgs={r['msgs_per_game']} lid={r['lid_pass']}")
+              f"success={r['success']} msgs={r['msgs_per_game']} lid={r['lid_pass']} refused={r['refusal_rate']}")
     for k, v in sorted(out["spend_usd"].items()):
         print(f"spend {k}: ${v} ({out['tokens'][k]})")
     print(f"spend total: ${out['spend_total_usd']}")
 
 
 def main():
+    global ONLY_CONDS, GIVEN_WORDS, PLAYER, MONOLINGUAL
     ap = argparse.ArgumentParser()
     ap.add_argument("cmd", choices=["plan", "batch", "dialogue", "report"])
     ap.add_argument("--run", default="main")
@@ -435,9 +446,10 @@ def main():
     ap.add_argument("--conds", nargs="*", default=None, help="only these conditions (e.g. passthrough)")
     ap.add_argument("--players", nargs="*", default=[], help="per-language models, e.g. ko=local:exaone-3.5-7.8b-instruct")
     ap.add_argument("--answer-words", action="store_true", help="give the MCQ answerer its yes/no/maybe words")
+    ap.add_argument("--player", default=PLAYER, help="API player model (default gemini-3.8-flash)")
+    ap.add_argument("--monolingual", action="store_true", help="players understand only their own language")
     args = ap.parse_args()
-    global ONLY_CONDS, GIVEN_WORDS
-    ONLY_CONDS, GIVEN_WORDS = args.conds, args.answer_words
+    ONLY_CONDS, GIVEN_WORDS, PLAYER, MONOLINGUAL = args.conds, args.answer_words, args.player, args.monolingual
     PLAYERS.update(p.split("=", 1) for p in args.players)
     pairs = [tuple(p.split("-")) for p in args.pairs] if args.pairs else PAIRS
     opts = {"run_dir": OUTPUT_ROOT / args.run, "tasks": args.tasks, "pairs": pairs, "n": args.n,
@@ -454,7 +466,8 @@ def main():
     with open(opts["run_dir"] / "config.json", "w") as f:
         json.dump({"player": backend.config(), "players": {c: backends[m].config() for c, m in PLAYERS.items()},
                    "tasks": args.tasks, "pairs": pairs, "n": args.n,
-                   "route_level": args.route_level, "translators": TRANSLATORS, "pivots": PIVOTS}, f, indent=1, default=str)
+                   "route_level": args.route_level, "translators": TRANSLATORS, "pivots": PIVOTS,
+                   "monolingual": MONOLINGUAL, "conds": ONLY_CONDS}, f, indent=1, default=str)
     cache = ReplayCache(opts["run_dir"] / "cache.jsonl")
     if args.cmd == "batch":
         return cmd_batch(opts, backend, cache, args.loop, args.interval)

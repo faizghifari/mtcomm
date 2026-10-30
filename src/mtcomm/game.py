@@ -11,6 +11,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Callable, Dict, List, Optional
 
 from .channels import Channel, ChannelOutput
+from .languages import get as lang_info
 
 
 @dataclass
@@ -96,12 +97,14 @@ MAX_REWRITES = 2
 
 
 def run_episode(gm: GameMaster, players: Dict[str, "Player"], channel: Channel,
-                lid: Optional[Callable[[str, str], dict]] = None, max_moves: int = 20) -> dict:
+                lid: Optional[Callable[[str, str], dict]] = None, max_moves: int = 20,
+                lang_reject: bool = False) -> dict:
     """Play one episode. `lid(text, lang)` optionally checks each player's text is in its language.
 
     A game may define validate(role, text) -> reason or None: a rejected message never reaches the
     channel; the player is told why and asked to rewrite it, up to MAX_REWRITES times, after which the
-    message is sent and flagged as a violation."""
+    message is sent and flagged as a violation. With lang_reject, a message of 3+ words that the
+    language check confidently places in another language is rejected the same way."""
     for _ in range(max_moves):
         if gm.is_done():
             break
@@ -116,6 +119,11 @@ def run_episode(gm: GameMaster, players: Dict[str, "Player"], channel: Channel,
             # an empty message is always rejected (seen with small local players: {"action": "message"})
             violation = "Your message was empty." if not move.content.strip() else (
                 validate(role, move.content) if validate is not None else None)
+            if violation is None and lang_reject and lid and len(move.content.split()) >= 3:
+                c = lid(move.content, gm.roles[role])
+                if not c["ok"] and not c["needs_review"]:
+                    name = lang_info(gm.roles[role]).name
+                    violation = f"Your message is not in {name}. Write it only in {name}."
             if violation is None or len(rejected) == MAX_REWRITES:
                 break
             rejected.append({"text": move.content, "reason": violation})
