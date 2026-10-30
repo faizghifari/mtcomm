@@ -85,11 +85,11 @@ def spend(cache):
 
 
 def run(args):
-    d = OUT / args.model
+    d = OUT / args.model.replace(":", "_")  # taco:<model>; no colons on the Windows drive
     d.mkdir(parents=True, exist_ok=True)
     api = args.model.startswith(API)
-    if api:
-        be = make_backend(args.model)
+    if api or args.model.startswith("taco:"):
+        be = make_backend(args.model, **({"workers": args.workers} if not api else {}))
     else:
         subprocess.run([LMS, "unload", "--all"], capture_output=True)
         subprocess.run([LMS, "load", args.model, "--gpu", "max", "-c", str(args.ctx), "--parallel", str(args.workers),
