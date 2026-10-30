@@ -10,6 +10,7 @@ screened for Gemini in the main runs. Twenty Questions uses the 100-candidate ea
 entity given to the answerer in L, as in MuG-Eval (su/jv words: native check pending).
 
 Usage: python scripts/mugeval_ceiling.py run --model exaone-3.5-7.8b-instruct --lang ko [--task twentyq] [--n 50]
+       [--ctx 16384 --retry-errors]  (re-asks calls that failed, e.g. on context overflow; answered calls replay)
        python scripts/mugeval_ceiling.py report
 """
 
@@ -42,10 +43,12 @@ def run(args):
     d = OUT / args.model
     d.mkdir(parents=True, exist_ok=True)
     subprocess.run([LMS, "unload", "--all"], capture_output=True)
-    subprocess.run([LMS, "load", args.model, "--gpu", "max", "-c", "8192", "--parallel", str(args.workers), "-y"],
+    subprocess.run([LMS, "load", args.model, "--gpu", "max", "-c", str(args.ctx), "--parallel", str(args.workers), "-y"],
                    check=True, capture_output=True)
     be = LocalBackend(f"local:{args.model}", workers=args.workers)
     cache = ReplayCache(d / "cache.jsonl")
+    if args.retry_errors:
+        cache.records = {k: r for k, r in cache.records.items() if "text" in r}
     Game, load = TASKS[args.task]
     eps = [(L, cond, it) for L in args.lang for it in load(L, L, n=args.n, seed=args.seed)
            for cond in ("ceiling", "prior")]
@@ -111,6 +114,8 @@ def main():
     r.add_argument("--n", type=int, default=50)
     r.add_argument("--seed", type=int, default=1)
     r.add_argument("--workers", type=int, default=4)
+    r.add_argument("--ctx", type=int, default=8192)
+    r.add_argument("--retry-errors", action="store_true")
     sub.add_parser("report")
     args = ap.parse_args()
     {"run": run, "report": report}[args.cmd](args)
