@@ -27,7 +27,7 @@ from mtcomm.paths import OUTPUT_ROOT
 
 OUT = OUTPUT_ROOT / "metrics"
 TRANSLATED = {"sol", "flash-lite", "nllb", "google", "qwen", "nllb-id", "google-id"}
-MODELS = ["cometkiwi", "xcomet"]  # xcomet needs more RAM than this machine has (see comet_score.py)
+MODELS = ["cometkiwi", "xcomet"]  # xcomet only with comet_score.py --low-mem on this machine
 
 
 def _seg_id(src, mt, a, b):
@@ -176,7 +176,7 @@ def report():
     for line in open(OUT / "comet_scores.jsonl"):
         r = json.loads(line)
         scores[r["record_id"]] = {m: r.get(f"{m}_score") for m in MODELS}
-    for xp in sorted(OUT.glob("xcomet_v*.jsonl")):  # XCOMET-XL scored on taco's CPU (comet_score.py --gpus 0)
+    for xp in sorted(OUT.glob("xcomet_v*.jsonl")):  # XCOMET-XL: v1 on taco CPU (--gpus 0), v2 here (--low-mem)
         for line in open(xp):
             r = json.loads(line)
             scores.setdefault(r["record_id"], {})["xcomet"] = r.get("xcomet_score")
