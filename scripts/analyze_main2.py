@@ -31,7 +31,7 @@ def wilson(k, n, z=1.96):
     d = 1 + z * z / n
     c = (p + z * z / (2 * n)) / d
     h = z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / d
-    return (round(c - h, 3), round(c + h, 3))
+    return (round(max(0.0, c - h), 3), round(min(1.0, c + h), 3))
 
 
 def spearman(a, b):
@@ -129,6 +129,25 @@ def main():
                 g = f" g{pct(v['graded'])}" if v["graded"] is not None else ""
                 row.append(f"{pct(v['success'])} ({v['n']}){extra}{g}")
             md.append(f"| {p} | " + " | ".join(row) + " |")
+        # pooled over pairs: one row per condition (headline numbers)
+        pool = defaultdict(lambda: [0, 0])
+        for (tk, p, c), v in cells.items():
+            if c in ("ceiling", "prior") or v["success"] is None:
+                continue
+            pool[c][0] += round(v["success"] * v["n"])
+            pool[c][1] += v["n"]
+        for (tk, p, c), v in cells.items():
+            if c in ("ceiling", "prior") and v["success"] is not None:
+                w = sum(1 for q in pairs if q.split(">")[-1].split("-")[-1] == p)  # pairs that share it
+                pool[c][0] += w * round(v["success"] * v["n"])
+                pool[c][1] += w * v["n"]
+        md.append("\nPooled over pairs (ceiling/prior weighted by the pairs that share them):\n")
+        md.append("| condition | success % | 95% CI | n |\n|---|---|---|---|")
+        for c in conds:
+            k, n = pool[c]
+            lo, hi = wilson(k, n)
+            md.append(f"| {c} | {pct(k / n if n else None)} | {pct(lo)}–{pct(hi)} | {n} |")
+        dump.setdefault("pooled", {})[run] = {c: {"k": pool[c][0], "n": pool[c][1]} for c in conds}
         # relative to ceiling and gain over prior, translators only
         md.append("\nTranslator success relative to the ceiling (translated / ceiling) and share of the ceiling-over-prior gain kept:\n")
         md.append("| pair | " + " | ".join(t for t in TRANSLATORS if t in conds) + " |")
