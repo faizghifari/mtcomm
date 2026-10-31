@@ -11,6 +11,7 @@ Usage: python scripts/analyze_main2.py [--runs main2_mcq main2_image ...]
 import argparse
 import json
 import math
+import random
 from collections import defaultdict
 from itertools import combinations
 
@@ -88,10 +89,31 @@ def cells_of(run):
                 c["refused"] += any(is_not_understood(t["source"], k) for k in NOT_UNDERSTOOD)
     out = {}
     for k, c in cell.items():
+        if not c["n"]:  # every game errored (e.g. the player's server went down): no cell
+            continue
         out[k] = {"n": c["n"], "errors": c["err"], "success": round(c["ok"] / c["n"], 3) if c["n"] else None,
                   "ci": wilson(c["ok"], c["n"]), "refusal": round(c["refused"] / c["msgs"], 3) if c["msgs"] else None,
                   "graded": round(sum(c["graded"]) / len(c["graded"]), 3) if c["graded"] else None}
     return out
+
+
+def retest_rho(run, reps=1000, seed=0):
+    """Mean and 90% range of the Spearman between two bootstrap redraws of every translator cell's games:
+    how far the same player, rerun on new games at the same n, would reproduce its own cell ranking."""
+    games = defaultdict(list)
+    for line in open(OUTPUT_ROOT / run / "records.jsonl"):
+        r = json.loads(line)
+        if r["status"] == "done" and r["cond"] in TRANSLATORS:
+            games[(r["pair"], r["cond"])].append(bool(r["score"].get("correct")))
+    rng, keys, rs = random.Random(seed), sorted(games), []
+    if len(keys) < 3:
+        return None
+    for _ in range(reps):
+        a, b = ([sum(rng.choices(games[k], k=len(games[k]))) / len(games[k]) for k in keys] for _ in range(2))
+        rs.append(spearman(a, b) or 0.0)
+    rs.sort()
+    return {"mean": round(sum(rs) / reps, 2), "lo": round(rs[reps // 20], 2), "hi": round(rs[-reps // 20 - 1], 2),
+            "cells": len(keys)}
 
 
 def pct(x):
@@ -192,6 +214,14 @@ def main():
             rho = spearman([per[a][k] for k in keys], [per[b][k] for k in keys]) if len(keys) > 2 else None
             md.append(f"- {a} vs {b}: rho = {rho} over {len(keys)} cells")
             dump.setdefault("ranking", {})[f"{task}|{a}|{b}"] = {"rho": rho, "cells": len(keys)}
+    md.append("\n## Same-player retest reliability of the cell ranking\n")
+    md.append("Spearman between two bootstrap redraws of each translator cell (same n): the agreement to expect "
+              "from noise alone, a rough reference for cross-player and metric-vs-success correlations.\n")
+    md.append("| run | cells | mean rho | 90% range |\n|---|---|---|---|")
+    for run in dict.fromkeys(args.runs + [r for rs in ROBUST.values() for r in rs]):
+        if (OUTPUT_ROOT / run / "records.jsonl").exists() and (rt := retest_rho(run)):
+            md.append(f"| {run} | {rt['cells']} | {rt['mean']} | {rt['lo']} to {rt['hi']} |")
+            dump.setdefault("retest", {})[run] = rt
     (OUT / "tables.md").write_text("\n".join(md) + "\n")
     json.dump(dump, open(OUT / "cells.json", "w"), indent=1)
     print(f"wrote {OUT / 'tables.md'}")
