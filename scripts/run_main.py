@@ -455,6 +455,8 @@ def main():
     ap.add_argument("--answer-words", action="store_true", help="give the MCQ answerer its yes/no/maybe words")
     ap.add_argument("--player", default=PLAYER, help="API player model (default gemini-3.8-flash)")
     ap.add_argument("--monolingual", action="store_true", help="players understand only their own language")
+    ap.add_argument("--retry-errors", action="store_true",
+                    help="re-ask cached calls that failed (e.g. while taco was unreachable) and failed translations")
     ap.add_argument("--seq-manifest", default=None, help="sequence stories (default: newest manifest_seq_v*.json)")
     ap.add_argument("--seq-words", type=int, default=60, help="word budget for the sequence story")
     ap.add_argument("--seq-questions", type=int, default=3, help="arranger questions in the sequence game")
@@ -480,6 +482,9 @@ def main():
                    "route_level": args.route_level, "translators": TRANSLATORS, "pivots": PIVOTS,
                    "monolingual": MONOLINGUAL, "conds": ONLY_CONDS, "sequence": SEQ}, f, indent=1, default=str)
     cache = ReplayCache(opts["run_dir"] / "cache.jsonl")
+    if args.retry_errors:
+        cache.records = {k: r for k, r in cache.records.items()
+                         if "error" not in r and not (k.startswith("channel|") and r.get("text") is None)}
     if args.cmd == "batch":
         return cmd_batch(opts, backend, cache, args.loop, args.interval)
     return cmd_dialogue(opts, backends, cache, args.workers)
