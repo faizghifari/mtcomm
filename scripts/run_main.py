@@ -228,7 +228,10 @@ def build(ep, make_gen):
     gm, roles = ep["build"]()
     opener = gm.next_role()
     def system(code):
-        return monolingual_system(lang_info(code).name, code) if MONOLINGUAL and code not in PLAYERS else None
+        # no prompt in the prior: with no partner message, Gemini 3.8 Flash answered "I don't understand"
+        # instead of guessing (route, sequence, image priors, 2026-10-31)
+        mono = MONOLINGUAL and code not in PLAYERS and ep["cond"] != "prior"
+        return monolingual_system(lang_info(code).name, code) if mono else None
 
     return gm, {role: LLMPlayer(make_gen(role, gm.roles[role], share_first=(role == opener)),
                                 PLAYERS.get(gm.roles[role], PLAYER), system(gm.roles[role])) for role in roles}
@@ -246,7 +249,8 @@ def run_one(ep, backends, cache, chans, mode, pending=None):
     gm, players = build(ep, make_gen)
     # In the batch phase an uncached translation is left for `dialogue` (translators are synchronous).
     channel = CachedChannel(chans.get(ep["cond"]), cache, ep["id"], offline=(mode == "batch"))
-    rec = run_episode(gm, players, channel, lid=lid.check, max_moves=50, lang_reject=MONOLINGUAL)
+    rec = run_episode(gm, players, channel, lid=lid.check, max_moves=50, lang_reject=MONOLINGUAL,
+                      refused=is_not_understood if MONOLINGUAL else None)
     rec.update(episode=ep["id"], task=ep["task"], pair=ep["pair"], cond=ep["cond"], eval_lang=ep["eval_lang"],
                model={r: PLAYERS.get(c, PLAYER) for r, c in gm.roles.items()} if PLAYERS else PLAYER, status="done")
     return rec

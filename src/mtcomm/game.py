@@ -47,6 +47,9 @@ class Turn:
     violation: Optional[str] = None  # set when the sent message still broke the game's rules
 
 
+UNREADABLE = "(a message in a language you cannot read)"
+
+
 class GameMaster(ABC):
     """One episode of one task item."""
 
@@ -55,13 +58,29 @@ class GameMaster(ABC):
         self.roles = roles  # role -> language code
         self.turns: List[Turn] = []
         self.inbox: Dict[str, List[Optional[str]]] = {r: [] for r in roles}
+        self.unreadable: set = set()  # indices into turns of messages their receiver refused as unreadable
+
+    def redact_received(self, role: str) -> int:
+        """`role` just answered with "I don't understand": the partner messages it received since its own
+        last message become unreadable in everything it sees from now on (a model told to ignore a message
+        it can in fact read still uses it at answer time). Returns how many were redacted."""
+        last_own = max((i for i, t in enumerate(self.turns) if t.role == role), default=-1)
+        k = 0
+        received = [i for i, t in enumerate(self.turns) if t.kind == "message" and t.role != role]
+        for j, i in enumerate(received):
+            if i > last_own and i not in self.unreadable:
+                self.unreadable.add(i)
+                self.inbox[role][j] = UNREADABLE
+                k += 1
+        return k
 
     def other(self, role: str) -> str:
         return next(r for r in self.roles if r != role)
 
     def dialogue(self, role: str) -> List[dict]:
-        return [{"speaker": "you", "text": t.source} if t.role == role else {"speaker": "partner", "text": t.delivered}
-                for t in self.turns if t.kind == "message"]
+        return [{"speaker": "you", "text": t.source} if t.role == role else
+                {"speaker": "partner", "text": UNREADABLE if i in self.unreadable else t.delivered}
+                for i, t in enumerate(self.turns) if t.kind == "message"]
 
     def history(self) -> List[dict]:
         return [{"role": t.role, "text": t.source} for t in self.turns if t.kind == "message"]
@@ -90,7 +109,8 @@ class GameMaster(ABC):
             raise ValueError(f"unknown move kind {move.kind!r}")
 
     def record(self) -> dict:
-        return {"item": self.item, "roles": self.roles, "turns": [asdict(t) for t in self.turns], "score": self.score()}
+        return {"item": self.item, "roles": self.roles, "turns": [asdict(t) for t in self.turns], "score": self.score(),
+                "unreadable_turns": sorted(self.unreadable)}
 
 
 MAX_REWRITES = 2
@@ -98,13 +118,15 @@ MAX_REWRITES = 2
 
 def run_episode(gm: GameMaster, players: Dict[str, "Player"], channel: Channel,
                 lid: Optional[Callable[[str, str], dict]] = None, max_moves: int = 20,
-                lang_reject: bool = False) -> dict:
+                lang_reject: bool = False, refused: Optional[Callable[[str, str], bool]] = None) -> dict:
     """Play one episode. `lid(text, lang)` optionally checks each player's text is in its language.
 
     A game may define validate(role, text) -> reason or None: a rejected message never reaches the
     channel; the player is told why and asked to rewrite it, up to MAX_REWRITES times, after which the
     message is sent and flagged as a violation. With lang_reject, a message of 3+ words that the
-    language check confidently places in another language is rejected the same way."""
+    language check confidently places in another language is rejected the same way. With `refused(text,
+    lang)`, a message that says the player could not understand makes the messages it refused unreadable
+    to it from then on (GameMaster.redact_received)."""
     for _ in range(max_moves):
         if gm.is_done():
             break
@@ -132,6 +154,8 @@ def run_episode(gm: GameMaster, players: Dict[str, "Player"], channel: Channel,
         if move.kind != "message":
             violation = None
         check = lid(move.content, gm.roles[role]) if (lid and move.kind == "message") else None
+        if refused is not None and move.kind == "message" and refused(move.content, gm.roles[role]):
+            gm.redact_received(role)
         if move.kind == "message":
             out = channel.translate(move.content, gm.roles[role], gm.roles[gm.other(role)], history=gm.history())
             gm.apply(role, move, out, check)
