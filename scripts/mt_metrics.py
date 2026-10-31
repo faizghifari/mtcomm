@@ -151,11 +151,35 @@ def _auc(pos, neg):
     return round(wins / (len(pos) * len(neg)), 3)
 
 
+def _spearman(a, b):
+    def ranks(v):
+        order = sorted(range(len(v)), key=lambda i: v[i])
+        r = [0.0] * len(v)
+        i = 0
+        while i < len(v):
+            j = i
+            while j + 1 < len(v) and v[order[j + 1]] == v[order[i]]:
+                j += 1
+            for k in range(i, j + 1):
+                r[order[k]] = (i + j) / 2
+            i = j + 1
+        return r
+    ra, rb = ranks(a), ranks(b)
+    ma, mb = sum(ra) / len(ra), sum(rb) / len(rb)
+    num = sum((x - ma) * (y - mb) for x, y in zip(ra, rb))
+    den = (sum((x - ma) ** 2 for x in ra) * sum((y - mb) ** 2 for y in rb)) ** 0.5
+    return round(num / den, 3) if den else None
+
+
 def report():
     scores = {}
     for line in open(OUT / "comet_scores.jsonl"):
         r = json.loads(line)
         scores[r["record_id"]] = {m: r.get(f"{m}_score") for m in MODELS}
+    for xp in sorted(OUT.glob("xcomet_v*.jsonl")):  # XCOMET-XL scored on taco's CPU (comet_score.py --gpus 0)
+        for line in open(xp):
+            r = json.loads(line)
+            scores.setdefault(r["record_id"], {})["xcomet"] = r.get("xcomet_score")
     gp = OUT / "gemba_scores.jsonl"
     if gp.exists():
         for line in open(gp):
@@ -183,7 +207,22 @@ def report():
             ep = [(sum(v[metric]) / len(v[metric]), outcome[k]) for k, v in episodes.items()
                   if k[0] == task and v[metric]]
             auc[f"{task}/{metric}"] = _auc([s for s, ok in ep if ok], [s for s, ok in ep if not ok])
-    json.dump({"cells": rows, "auc_success_vs_episode_mean": auc}, open(OUT / "summary.json", "w"), indent=1)
+    # cell level: does a cell's mean metric rank cells like their task success does?
+    cell_ok = defaultdict(list)
+    for (task, ep), ok in outcome.items():
+        cell_ok[(task,) + tuple(ep.split("|")[1:3][::-1])].append(ok)  # episode id: task|cond|pair|item
+    spear = {}
+    for task in sorted({t for t, _ in episodes}):
+        for metric in MODELS + ["gemba"]:
+            xs, ys = [], []
+            for (t, p, c), v in cells.items():
+                if t == task and v.get(metric) and cell_ok.get((t, p, c)):
+                    xs.append(sum(v[metric]) / len(v[metric]))
+                    ys.append(sum(cell_ok[(t, p, c)]) / len(cell_ok[(t, p, c)]))
+            spear[f"{task}/{metric}"] = (_spearman(xs, ys), len(xs)) if len(xs) > 2 else None
+    json.dump({"cells": rows, "auc_success_vs_episode_mean": auc, "cell_spearman_vs_success": spear},
+              open(OUT / "summary.json", "w"), indent=1)
+    print("cell Spearman (metric mean vs success rate, n cells):", spear)
     for r in rows:
         print(r)
     print("AUC (episode mean metric separates success from failure; 0.5 = no signal):", auc)
