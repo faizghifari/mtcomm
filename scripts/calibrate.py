@@ -31,6 +31,8 @@ VARIANTS = {
     "mcq_w2": ("mcq", 20, BOTH, ["--mcq-screen", str(MCQ / "mcq_screen_38_w2.json")], "prior wrong in 2 of 3 languages, 4 questions"),
     "mcq_v2m": ("mcq", 20, ["ceiling", "passthrough"], ["--mcq-maybe-rule"], "v2 items, answerer told to say maybe rather than refuse"),
     "twentyq_q10": ("twentyq", 20, ["ceiling"], ["--twentyq-pool", "paper140", "--twentyq-questions", "10"], "paper's 140 words, 10 questions"),
+    "mcq_gate": ("mcq", 20, ["ceiling", "passthrough"], ["--mcq-lid-gate"], "v2 items, language check as the answerer's gate"),
+    "twentyq_q7": ("twentyq", 20, ["ceiling"], ["--twentyq-pool", "paper140", "--twentyq-questions", "7"], "paper's 140 words, 7 questions"),
     "twentyq": ("twentyq", 20, BOTH, ["--twentyq-pool", "paper140"], "paper's 140 words"),
     "seq_w12": ("sequence", 20, ["ceiling"], ["--seq-manifest", str(BV / "manifest_seq_v3.json"), "--seq-words", "12", *SEQ], "v3, 12 words"),
     "seq_k4": ("sequence", 20, BOTH, ["--seq-manifest", str(BV / "manifest_seq_v3k4.json"), "--seq-words", "20", *SEQ], "4 distractors, 20 words"),
@@ -91,6 +93,8 @@ def report():
             ok = int(bool(r["score"].get("correct")))
             if r["cond"] == "prior":
                 pr.append(ok)
+                continue
+            if r["cond"] != "ceiling":  # e.g. a passthrough check of the same variant
                 continue
             ce.append(ok)
             langs[r["eval_lang"]].append(ok)

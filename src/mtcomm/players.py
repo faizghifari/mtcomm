@@ -41,6 +41,19 @@ def monolingual_system(name: str, code: str) -> str:
             f"message: \"{NOT_UNDERSTOOD[code]}\" Always write only in {name}.")
 
 
+def monolingual_system_v3(name: str, code: str) -> str:
+    """v2 with the language judgement separated from whether the message can be answered: 3.8 Flash refused 34% of MCQ
+    questions written in its own language under v2 (docs/poc_diagnostics.md)."""
+    return (f"You are a native speaker of {name}, and {name} is the only language you understand. Apart from these "
+            f"instructions, you cannot read any other language: not English, and not languages related to {name} or "
+            f"spoken near it. For each message from your partner, first decide only which language it is written in. "
+            f"Ignore whether it makes sense, whether its facts are right, and whether you can answer it. A message "
+            f"written in {name} is {name} even if it contains names, numbers, borrowed words, or words that {name} shares "
+            f"with related languages, and even if it is a little unnatural: do the task as told. Only if a message is "
+            f"clearly written in another language, you cannot understand any of it: do not use its content, do not guess, "
+            f"and send only this message: \"{NOT_UNDERSTOOD[code]}\" Always write only in {name}.")
+
+
 def is_not_understood(text: str, code: str) -> bool:
     norm = lambda s: re.sub(r"[^\w]+", " ", s).strip().casefold()  # noqa: E731
     return norm(NOT_UNDERSTOOD[code].split(".")[0]) in norm(text or "")
@@ -121,6 +134,25 @@ class LLMPlayer(Player):
     def act(self, obs):
         raw = self.generate(self.prompt(obs), self.system, obs.images)
         return parse_action(raw, obs)
+
+
+class LidGatedPlayer(Player):
+    """The language gate enforced by the language check instead of the model. A message of 3+ words that the check confidently
+    places in another language gets the fixed refusal without a model call; anything else goes to the player.
+    3.8 Flash with the monolingual prompt refused a third of MCQ questions written in its own language, and stronger wording
+    made it worse, while this check gates 100% of untranslated questions and 0.3% of same-language ones
+    (docs/poc_diagnostics.md, section 6)."""
+
+    def __init__(self, inner: Player, code: str, check: Callable[[str, str], dict]):
+        self.inner, self.code, self.check = inner, code, check
+
+    def act(self, obs):
+        message = obs.inbox[-1] if obs.inbox else None
+        if message and len(message.split()) >= 3:
+            c = self.check(message, self.code)
+            if not c["ok"] and not c["needs_review"]:
+                return Move("message", NOT_UNDERSTOOD[self.code])
+        return self.inner.act(obs)
 
 
 def text_provider_generate(provider) -> Callable:

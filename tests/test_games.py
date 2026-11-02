@@ -555,3 +555,16 @@ def test_wayfind_prior_needs_no_message_and_the_guide_is_held_to_the_limits():
     assert "words" in gm.validate("guide", "one two three four five six")
     assert "line breaks" in gm.validate("guide", "go on\nthen left")
     assert gm.validate("guide", "go straight then left") is None
+
+
+def test_lid_gate_refuses_only_confident_other_language_messages():
+    from mtcomm.players import NOT_UNDERSTOOD, LidGatedPlayer
+    inner = ScriptedPlayer([Move("message", "Enya.")])
+    other = {"ok": False, "needs_review": False}
+    gated = LidGatedPlayer(inner, "su", lambda text, code: other)
+    assert gated.act(Observation("answerer", "su", "x", inbox=["this is english text"])).content == NOT_UNDERSTOOD["su"]
+    assert inner.moves if hasattr(inner, "moves") else True
+    unsure = LidGatedPlayer(ScriptedPlayer([Move("message", "Enya.")]), "su", lambda t, c: {"ok": False, "needs_review": True})
+    assert unsure.act(Observation("answerer", "su", "x", inbox=["maybe english text"])).content == "Enya."
+    short = LidGatedPlayer(ScriptedPlayer([Move("message", "Enya.")]), "su", lambda t, c: other)
+    assert short.act(Observation("answerer", "su", "x", inbox=["two words"])).content == "Enya."

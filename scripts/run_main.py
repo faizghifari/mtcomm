@@ -46,7 +46,7 @@ from mtcomm.games.sequence import SequenceGame
 from mtcomm.games.wayfind import WayfindGame
 from mtcomm.paths import DATA_ROOT, OUTPUT_ROOT
 from mtcomm.languages import get as lang_info
-from mtcomm.players import NOT_UNDERSTOOD, LLMPlayer, is_not_understood, monolingual_system
+from mtcomm.players import LidGatedPlayer, NOT_UNDERSTOOD, LLMPlayer, is_not_understood, monolingual_system
 from mtcomm.replay import BatchGenerate, CachedChannel, CallFailed, Pending, ReplayCache, SyncGenerate
 
 PLAYER = "gemini-3.8-flash"
@@ -134,7 +134,7 @@ MCQ_SCREEN = next((p for p in (DATA_ROOT / "derived" / "mcq" / f"mcq_screen_v{v}
 
 # --twentyq-pool / --mcq-screen / --culture-style / --culture-screen: fixes from docs/poc_diagnostics.md, opt-in so that
 # existing runs replay unchanged.
-ITEMS = {"twentyq_pool": "all", "mcq_screen": None, "mcq_questions": None, "mcq_maybe_rule": False, "twentyq_questions": None, "culture_style": "neutral", "culture_screen": None}
+ITEMS = {"twentyq_pool": "all", "mcq_screen": None, "mcq_questions": None, "mcq_maybe_rule": False, "mcq_lid_gate": False, "twentyq_questions": None, "culture_style": "neutral", "culture_screen": None}
 
 
 def task_items(task, load, a, b, n):
@@ -265,8 +265,14 @@ def build(ep, make_gen):
         mono = MONOLINGUAL and code not in PLAYERS and ep["cond"] != "prior"
         return monolingual_system(lang_info(code).name, code) if mono else None
 
-    return gm, {role: LLMPlayer(make_gen(role, gm.roles[role], share_first=(role == opener)),
-                                PLAYERS.get(gm.roles[role], PLAYER), system(gm.roles[role])) for role in roles}
+    players = {role: LLMPlayer(make_gen(role, gm.roles[role], share_first=(role == opener)),
+                               PLAYERS.get(gm.roles[role], PLAYER), system(gm.roles[role])) for role in roles}
+    if ep["task"] == "mcq" and ITEMS["mcq_lid_gate"] and MONOLINGUAL and "answerer" in players:
+        # The passage holder has no monolingual prompt; the language check decides what it can read.
+        code = gm.roles["answerer"]
+        inner = LLMPlayer(players["answerer"].generate, players["answerer"].label, None)
+        players["answerer"] = LidGatedPlayer(inner, code, lid.check)
+    return gm, players
 
 
 def run_one(ep, backends, cache, chans, mode, pending=None):
@@ -493,6 +499,7 @@ def main():
     ap.add_argument("--mcq-screen", default=None, help="screen file for MCQ items, or 'random' for no screen")
     ap.add_argument("--mcq-questions", type=int, default=None, help="MCQ question count (default: MuG-Eval's 4)")
     ap.add_argument("--mcq-maybe-rule", action="store_true", help="tell the MCQ answerer to say maybe, not refuse, when the passage does not settle a question")
+    ap.add_argument("--mcq-lid-gate", action="store_true", help="MCQ answerer: the language check is the gate, no monolingual prompt")
     ap.add_argument("--twentyq-questions", type=int, default=None, help="Twenty Questions question budget (default 20)")
     ap.add_argument("--culture-style", default="neutral", choices=["neutral", "explicit", "targeted"])
     ap.add_argument("--culture-screen", default=None, help="screen file for culture items (scripts/culture_screen.py)")
@@ -507,7 +514,7 @@ def main():
     args = ap.parse_args()
     ONLY_CONDS, GIVEN_WORDS, PLAYER, MONOLINGUAL = args.conds, args.answer_words, args.player, args.monolingual
     SEQ.update(manifest=args.seq_manifest, max_words=args.seq_words, max_questions=args.seq_questions)
-    ITEMS.update(twentyq_pool=args.twentyq_pool, mcq_screen=args.mcq_screen, mcq_questions=args.mcq_questions, mcq_maybe_rule=args.mcq_maybe_rule,
+    ITEMS.update(twentyq_pool=args.twentyq_pool, mcq_screen=args.mcq_screen, mcq_questions=args.mcq_questions, mcq_maybe_rule=args.mcq_maybe_rule, mcq_lid_gate=args.mcq_lid_gate,
                  twentyq_questions=args.twentyq_questions, culture_style=args.culture_style,
                  culture_screen=args.culture_screen)
     PLAYERS.update(p.split("=", 1) for p in args.players)
