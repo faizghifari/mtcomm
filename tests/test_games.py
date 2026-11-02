@@ -602,3 +602,40 @@ def test_pivots_on_every_pair_only_when_asked():
         assert {"nllb-id", "google-id"} <= set(run_main.conditions("ko", "su"))
     finally:
         run_main.PIVOTS_ALL = False
+
+
+def _load_script(name):
+    import importlib.util
+    import sys
+    scripts = Path(__file__).resolve().parents[1] / "scripts"
+    sys.path.insert(0, str(scripts))
+    spec = importlib.util.spec_from_file_location(name, scripts / f"{name}.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_cell_flags_come_from_the_parent_config():
+    cells = _load_script("run_cells")
+    route = {"tasks": ["route"], "n": 15, "route_level": "easy", "route_start": 15, "items": {}}
+    assert cells.flags_from(route) == ["--n", "15", "--route-level", "easy", "--route-start", "15"]
+    seq = {"tasks": ["sequence"], "n": 30, "sequence": {"manifest": "m.json", "max_words": 20, "max_questions": 0}}
+    assert cells.flags_from(seq) == ["--n", "30", "--seq-words", "20", "--seq-questions", "0", "--seq-manifest", "m.json"]
+    mcq = {"tasks": ["mcq"], "n": 30, "items": {"mcq_lid_gate": True}}
+    assert cells.flags_from(mcq) == ["--n", "30", "--mcq-lid-gate"]
+
+
+def test_repeat_consistency_statistics():
+    rc = _load_script("repeat_consistency")
+    assert rc.kappa([1, 1, 0, 0], [1, 1, 0, 0]) == 1
+    assert rc.kappa([1, 1, 1, 1], [1, 1, 1, 1]) is None
+    assert abs(rc.kappa([1, 1, 0, 0], [1, 0, 1, 0])) < 1e-9
+    # every item always the same in its repeats: no residual, all item
+    v = rc.components({"a": [1, 1, 1], "b": [0, 0, 0]})
+    assert v["resid"] == 0 and abs(v["item"] - 0.5) < 1e-9
+    # coin-flip repeats on identical items: no item variance
+    v = rc.components({"a": [1, 0], "b": [1, 0]})
+    assert v["item"] == 0 and abs(v["resid"] - 0.5) < 1e-9
+    # more repeats shrink only the residual part
+    assert rc.se_design(0.1, 0.1, 100, 3) < rc.se_design(0.1, 0.1, 100, 1)
+    assert rc.se_design(0.1, 0.0, 100, 3) == rc.se_design(0.1, 0.0, 100, 1)

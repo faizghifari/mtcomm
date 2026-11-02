@@ -12,12 +12,12 @@ from mtcomm.paths import OUTPUT_ROOT
 easy = lambda r: r["item"]["item_id"].startswith("e")  # noqa: E731
 # task: (run, filter); runs that do not exist yet are skipped
 MERGES = {
-    "mcq": [("main3_mcq", None), ("main3p_mcq", None)],
-    "twentyq": [("main3_twentyq", None), ("main3p_twentyq", None)],
+    "mcq": [("main3_mcq", None), ("main3p_mcq", None), ("main3q_mcq", None)],
+    "twentyq": [("main3_twentyq", None), ("main3p_twentyq", None), ("main3q_twentyq", None)],
     "sequence": [("main2x_sequence", None), ("main3p_sequence", None)],
     "image": [("main2xf_image", None), ("main3p_image", None)],
-    "route": [("main2x_route", easy), ("main3_route_e16", None), ("main3p_route", None)],
-    "culture": [("main3_culture", None), ("main3p_culture", None)],
+    "route": [("main2x_route", easy), ("main3_route_e16", None), ("main3p_route", None), ("main3q_route", None)],
+    "culture": [("main3_culture", None), ("main3p_culture", None), ("main3q_culture", None)],
 }
 
 

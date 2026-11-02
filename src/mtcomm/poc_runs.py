@@ -1,7 +1,7 @@
 """The runs behind the PoC results, with one player (3.8 Flash) on every task. Analysis scripts read this list.
 
 Each poc3_<task> is the task's main run plus cells played later, merged by scripts/merge_runs.py: the Indonesian pivots on su<->ko
-(scripts/run_pivots.py), Qwen once taco is back, and for route the 30 easy maps (main2x_route e01-e15, main3_route_e16). Sequence and
+(scripts/run_cells.py), Qwen on the tasks that ran while taco was down, and for route the 30 easy maps (main2x_route e01-e15, main3_route_e16). Sequence and
 image come from main2, which already used 3.8 Flash. A condition goes in only when it has all the items.
 """
 
