@@ -30,6 +30,7 @@ import traceback
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
+from pathlib import Path
 
 from mtcomm import lid
 from mtcomm.backends import make_backend
@@ -129,11 +130,19 @@ MCQ_SCREEN = next((p for p in (DATA_ROOT / "derived" / "mcq" / f"mcq_screen_v{v}
                   DATA_ROOT / "derived" / "mcq" / "mcq_screen_v1.json")
 
 
+# --twentyq-pool / --mcq-screen / --culture-style / --culture-screen: fixes from docs/poc_diagnostics.md, opt-in so that
+# existing runs replay unchanged.
+ITEMS = {"twentyq_pool": "all", "mcq_screen": None, "culture_style": "neutral", "culture_screen": None}
+
+
 def task_items(task, load, a, b, n):
     """MCQ uses the items the no-talk prior got wrong (scripts/mcq_prior_screen.py) when screened."""
-    if task != "mcq" or not MCQ_SCREEN.exists():
+    if task == "twentyq":
+        return load(a, b, n=n, pool=ITEMS["twentyq_pool"])
+    path = ITEMS["mcq_screen"] or MCQ_SCREEN
+    if task != "mcq" or path == "random" or not Path(path).exists():
         return load(a, b, n=n)
-    screen = json.load(open(MCQ_SCREEN))
+    screen = json.load(open(path))
     by_id = {it["item_id"]: it for it in load(a, b, n=screen["pool"])}
     return [by_id[i] for i in screen["item_ids"]][:n]
 
@@ -180,8 +189,8 @@ def episodes(opts):
         items = load_route_items(langs=sorted({x for p in pairs for x in p}))
         easy = [it for it in items if it["map"]["level"] == "easy"]
         hard = [it for it in items if it["map"]["level"] == "hard"]
-        level = opts.get("route_level", "both")  # half easy, half hard; "hard" re-runs only the hard half
-        items = (easy[:(n + 1) // 2] if level != "hard" else []) + (hard[:n // 2] if level != "easy" else [])
+        level = opts.get("route_level", "both")  # both: half easy, half hard; easy or hard: n maps of that level
+        items = {"easy": easy[:n], "hard": hard[:n // 2]}[level] if level != "both" else easy[:(n + 1) // 2] + hard[:n // 2]
         for a, b in pairs:
             for it in items:
                 for cond in all_conds(a, b):
@@ -211,7 +220,11 @@ def episodes(opts):
                 continue
             # Items whose rendered options collide (e.g. football/soccer -> one word) are unanswerable.
             items = [it for it in blend if it["visitor_lang"] == v and it["local_culture"] == culture
-                     and len({o.strip().lower() for o in it["options"].values()}) == len(it["options"])][:n]
+                     and len({o.strip().lower() for o in it["options"].values()}) == len(it["options"])]
+            if ITEMS["culture_screen"]:  # scripts/culture_screen.py: prior wrong, and the local's top answer gives the gold
+                keep = set(json.load(open(ITEMS["culture_screen"]))["item_ids"])
+                items = [it for it in items if it["item_id"] in keep]
+            items = items[:n]
             for it in items:
                 for cond in all_conds(local_lang, v):
                     ll = v if cond == "ceiling" else local_lang
@@ -219,7 +232,7 @@ def episodes(opts):
                                     lambda it=it, ll=ll, v=v, cond=cond: (
                                         BlendLocalVisitorGame(it, ll, v, max_questions=0 if cond == "prior" else 3,
                                                               min_questions=0 if cond == "prior" else 1,
-                                                              prompt_style="neutral"),
+                                                              prompt_style=ITEMS["culture_style"]),
                                         ["visitor", "local"]))
 
 
@@ -456,6 +469,13 @@ def main():
     ap.add_argument("--answer-words", action="store_true", help="give the MCQ answerer its yes/no/maybe words")
     ap.add_argument("--player", default=PLAYER, help="API player model (default gemini-3.8-flash)")
     ap.add_argument("--monolingual", action="store_true", help="players understand only their own language")
+    ap.add_argument("--twentyq-pool", default="all", choices=["all", "paper140"], help="20Q word pool (paper140 = MuG-Eval's)")
+    ap.add_argument("--mcq-screen", default=None, help="screen file for MCQ items, or 'random' for no screen")
+    ap.add_argument("--culture-style", default="neutral", choices=["neutral", "explicit", "targeted"])
+    ap.add_argument("--culture-screen", default=None, help="screen file for culture items (scripts/culture_screen.py)")
+    ap.add_argument("--repeat", type=int, default=0,
+                    help="independent repeat k >= 1: runs in <run>_r<k> with its own cache, so nothing is replayed")
+    ap.add_argument("--temperature", type=float, default=None, help="player temperature (default: the API's default)")
     ap.add_argument("--retry-errors", action="store_true",
                     help="re-ask cached calls that failed (e.g. while taco was unreachable) and failed translations")
     ap.add_argument("--seq-manifest", default=None, help="sequence stories (default: newest manifest_seq_v*.json)")
@@ -464,12 +484,16 @@ def main():
     args = ap.parse_args()
     ONLY_CONDS, GIVEN_WORDS, PLAYER, MONOLINGUAL = args.conds, args.answer_words, args.player, args.monolingual
     SEQ.update(manifest=args.seq_manifest, max_words=args.seq_words, max_questions=args.seq_questions)
+    ITEMS.update(twentyq_pool=args.twentyq_pool, mcq_screen=args.mcq_screen, culture_style=args.culture_style,
+                 culture_screen=args.culture_screen)
     PLAYERS.update(p.split("=", 1) for p in args.players)
     pairs = [tuple(p.split("-")) for p in args.pairs] if args.pairs else PAIRS
-    opts = {"run_dir": OUTPUT_ROOT / args.run, "tasks": args.tasks, "pairs": pairs, "n": args.n,
+    run = f"{args.run}_r{args.repeat}" if args.repeat else args.run
+    opts = {"run_dir": OUTPUT_ROOT / run, "tasks": args.tasks, "pairs": pairs, "n": args.n,
             "route_level": args.route_level}
     opts["run_dir"].mkdir(parents=True, exist_ok=True)
-    backends = {m: make_backend(m) for m in {PLAYER, *PLAYERS.values()}}
+    sampling = {"temperature": args.temperature} if args.temperature is not None else {}
+    backends = {m: make_backend(m, **(sampling if m.startswith("gemini") else {})) for m in {PLAYER, *PLAYERS.values()}}
     backend = backends[PLAYER]
     if PLAYERS and args.cmd in ("plan", "batch"):
         raise SystemExit("--players (local models) runs `dialogue` directly; plan and batch are for the API player")
@@ -481,7 +505,8 @@ def main():
         json.dump({"player": backend.config(), "players": {c: backends[m].config() for c, m in PLAYERS.items()},
                    "tasks": args.tasks, "pairs": pairs, "n": args.n,
                    "route_level": args.route_level, "translators": TRANSLATORS, "pivots": PIVOTS,
-                   "monolingual": MONOLINGUAL, "conds": ONLY_CONDS, "sequence": SEQ}, f, indent=1, default=str)
+                   "monolingual": MONOLINGUAL, "conds": ONLY_CONDS, "sequence": SEQ, "repeat": args.repeat, "items": ITEMS},
+                  f, indent=1, default=str)
     cache = ReplayCache(opts["run_dir"] / "cache.jsonl")
     if args.retry_errors:
         cache.records = {k: r for k, r in cache.records.items()

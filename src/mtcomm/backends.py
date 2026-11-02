@@ -76,8 +76,9 @@ class GeminiBackend(Backend):
                        "gemini-3.1-pro-preview"}
 
     def __init__(self, model: str, thinking_level: Optional[str] = "low", media_resolution="MEDIA_RESOLUTION_HIGH",
-                 json_mode: bool = True):
+                 json_mode: bool = True, temperature: Optional[float] = None):
         self.model, self.json_mode = model, json_mode
+        self.temperature = temperature  # None = the API's default sampling (and the request stays unchanged)
         self.thinking_level = thinking_level if model in self.THINKING_MODELS else None
         self.media_resolution = media_resolution
         self._client = None
@@ -92,6 +93,7 @@ class GeminiBackend(Backend):
 
     def config(self):
         return {"provider": self.provider, "model": self.model, "thinking_level": self.thinking_level,
+                "temperature": self.temperature if self.temperature is not None else "api default",
                 "media_resolution": self.media_resolution,
                 "response_mime_type": "application/json" if self.json_mode else "text/plain",
                 "image_max_side": MAX_SIDE}
@@ -105,6 +107,8 @@ class GeminiBackend(Backend):
         gen = {"media_resolution": self.media_resolution}
         if self.json_mode:
             gen["response_mime_type"] = "application/json"
+        if self.temperature is not None:
+            gen["temperature"] = self.temperature
         if self.thinking_level:
             gen["thinking_config"] = {"thinking_level": self.thinking_level}
         req = {"contents": [{"role": "user", "parts": parts}], "generation_config": gen}
