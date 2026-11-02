@@ -2,6 +2,7 @@
 
 Usage: python scripts/route_build_maps.py [--easy 15] [--hard 15] [--seed 0]
        python scripts/route_build_maps.py --v2   (keep v1's easy maps, draw new hard maps hb01.. -> maps_v2.json)
+       python scripts/route_build_maps.py --v3 --easy 45 --seed 3  (keep every v2 map, append new easy maps e16.. -> maps_v3.json)
 Writes data/derived/route/maps_v1.json (or v2); per-language map images are drawn by data.load_route_items.
 New hard maps get new ids because map images are cached by id and labels.
 """
@@ -15,6 +16,11 @@ from mtcomm.routemap import make_picture_map
 
 OUT = DATA_ROOT / "derived" / "route" / "maps_v1.json"
 OUT_V2 = DATA_ROOT / "derived" / "route" / "maps_v2.json"
+OUT_V3 = DATA_ROOT / "derived" / "route" / "maps_v3.json"
+
+
+def route_signature(m):
+    return tuple(m["giver_landmarks"][r["landmark"]]["name"] for r in m["route"])
 
 
 def main():
@@ -23,8 +29,22 @@ def main():
     ap.add_argument("--hard", type=int, default=15)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--v2", action="store_true")
+    ap.add_argument("--v3", action="store_true")
     args = ap.parse_args()
     rng = random.Random(args.seed)
+    if args.v3:
+        old = json.load(open(OUT_V2))["maps"]
+        seen = {route_signature(m) for m in old}
+        first = sum(m["level"] == "easy" for m in old) + 1
+        new = []
+        while len(new) < args.easy:
+            m = make_picture_map(rng, "easy")
+            if route_signature(m) not in seen:  # no two maps share a route
+                seen.add(route_signature(m))
+                new.append(dict(m, map_id=f"e{first + len(new):02d}"))
+        json.dump({"version": 3, "seed": args.seed, "maps": old + new}, open(OUT_V3, "w"), indent=1)
+        print(f"{len(old)} old + {len(new)} new easy maps -> {OUT_V3}")
+        return
     if args.v2:
         maps = [m for m in json.load(open(OUT))["maps"] if m["level"] == "easy"]
         maps += [dict(make_picture_map(rng, "hard"), map_id=f"hb{k + 1:02d}") for k in range(args.hard)]

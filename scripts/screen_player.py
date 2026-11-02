@@ -42,10 +42,10 @@ def run_name(player, task):
 
 
 def run_task(player, task, n):
-    # Route: `--route-level easy` takes easy[:(n+1)//2], so n=30 is what yields all 15 easy maps.
+    # Route: the first 15 easy maps, the ones main2 played.
     conds = ["ceiling", "prior"] + (["passthrough"] if task in PASSTHROUGH else [])
     args = ["--run", run_name(player, task), "--tasks", task, "--player", player, "--monolingual",
-            "--n", "30" if task == "route" else str(n), "--conds", *conds, *SETTINGS.get(task, [])]
+            "--n", "15" if task == "route" else str(n), "--conds", *conds, *SETTINGS.get(task, [])]
     py = [sys.executable, str(HERE / "run_main.py")]
     log = open(OUTPUT_ROOT / f"{run_name(player, task)}.log", "a")
     for cmd in (["batch", "--loop", "--interval", "60"], ["dialogue", "--workers", "8"], ["report"]):
