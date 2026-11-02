@@ -20,9 +20,9 @@ HEAD = {"ceiling": "ceiling", "sol": "Sol", "flash-lite": "Flash-Lite", "google"
 def main():
     cells = json.load(open(D / "cells.json"))
     md = ["# Per-pair results (player: 3.8 Flash)\n",
-          "Success %, n=30 games per cell (95% interval about ±17 points). Sequence, image and route: `a-b` means a sends and b, "
+          "Success %, n=30 games per cell, 20–22 on culture (95% interval about ±17 points). Sequence, image and route: `a-b` means a sends and b, "
           "the receiver, is scored. MCQ and Twenty Questions: a asks and is scored, b holds the information, and both directions "
-          "are translated. Ceiling and prior belong to the scored language. Pivots exist for su↔jv only.\n"]
+          "are translated. Ceiling and prior belong to the scored language.\n"]
     for title, run, _ in available():
         c = cells.get(run)
         if not c:

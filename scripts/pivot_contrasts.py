@@ -89,14 +89,14 @@ def main():
     fmt = lambda d, p: f"{d:.0f} → {p:.0f}" if d is not None else "–"  # noqa: E731
     md = ["# Pivot through Indonesian vs direct\n",
           "Same system, same item. a → b: success % direct → via Indonesian. Direct / pivot wins = games only that version solved. "
-          "Holm over the 12 pooled contrasts. Without opening refusals: su↔ko, leaving out items whose direct game opened with a refusal.\n",
-          "| task | system | pooled (n) | direct / pivot wins | p | Holm p | su↔jv | su↔ko | su↔ko, without opening refusals (n) |",
-          "|---|---|---|---|---|---|---|---|---|"]
+          "Holm over the 12 pooled contrasts. su↔ko p is uncorrected. Without opening refusals: su↔ko, leaving out items whose direct game opened with a refusal.\n",
+          "| task | system | pooled (n) | direct / pivot wins | p | Holm p | su↔jv | su↔ko | su↔ko wins, p | su↔ko, without opening refusals (n) |",
+          "|---|---|---|---|---|---|---|---|---|---|"]
     for (title, name, sys_, games, bad, n, a, b, d, p), raw, h in zip(rows, ps, adj):
         _, _, _, jd, jp = contrast(games, sys_, lambda pair, item: family(pair) == "su↔jv")
-        _, _, _, kd, kp = contrast(games, sys_, lambda pair, item: family(pair) == "su↔ko")
+        _, ka, kb, kd, kp = contrast(games, sys_, lambda pair, item: family(pair) == "su↔ko")
         cn, _, _, cd, cp = contrast(games, sys_, lambda pair, item: family(pair) == "su↔ko" and (sys_, pair, item) not in bad)
-        md.append(f"| {title} | {name} | {fmt(d, p)} ({n}) | {a} / {b} | {raw:.3f} | {h:.3f} | {fmt(jd, jp)} | {fmt(kd, kp)} | {fmt(cd, cp)} ({cn}) |")
+        md.append(f"| {title} | {name} | {fmt(d, p)} ({n}) | {a} / {b} | {raw:.3f} | {h:.3f} | {fmt(jd, jp)} | {fmt(kd, kp)} | {ka} / {kb}, {mcnemar(ka, kb):.3f} | {fmt(cd, cp)} ({cn}) |")
     ANALYSIS.mkdir(exist_ok=True)
     (ANALYSIS / "pivot.md").write_text("\n".join(md) + "\n")
     print("\n".join(md))

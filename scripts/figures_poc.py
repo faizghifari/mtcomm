@@ -5,7 +5,7 @@ fig2_per_pair.png        the same per language pair (rows = tasks, columns = pai
 fig3_metrics.png         MT metrics vs task success: per-game AUC (bootstrap interval) and per-condition Spearman
 fig4_sequence_scatter.png  condition success vs mean metric on sequence, the one task whose conditions can be ranked
 
-Reads cells.json in the analysis directory (run scripts/analyze_main2.py first) and outputs/mtcomm/metrics2/*. Writes outputs/mtcomm/figures/*.png. Needs matplotlib, numpy and scipy.
+Reads cells.json in the analysis directory (run scripts/analyze_main2.py first) and outputs/mtcomm/metrics3/*. Writes outputs/mtcomm/figures/*.png. Needs matplotlib, numpy and scipy.
 
 Colours: the first three slots of the validated categorical palette (blue, orange, aqua; all-pairs CVD safe) and
 neutral greys. Orange is used only for the Indonesian pivots in figures 1-2 and for the second metric in figures 3-4.
@@ -26,7 +26,7 @@ from mtcomm.paths import OUTPUT_ROOT
 from mtcomm.poc_runs import ANALYSIS as D
 from mtcomm.poc_runs import available
 
-M = OUTPUT_ROOT / "metrics2"
+M = OUTPUT_ROOT / "metrics3"
 FIG = OUTPUT_ROOT / "figures"
 BLUE, ORANGE, AQUA = "#2a78d6", "#eb6834", "#1baf7a"
 INK, INK2, GRID, REF, REF_LIGHT = "#0b0b0b", "#52514e", "#e3e2de", "#52514e", "#a9a8a3"
@@ -92,9 +92,9 @@ def fig1(cells):
     ax = axes.flat[-1]
     ax.axis("off")
     ax.text(0, 0.98, "How to read", fontweight="bold", va="top", transform=ax.transAxes)
-    ax.text(0, 0.90, "Dot: success rate pooled over the four pairs\n(n=120 per translator, 60 per pivot).\nBar: Wilson 95% interval.\n"
+    ax.text(0, 0.90, "Dot: success rate pooled over the four pairs\n(n=120 per translator and pivot; culture 42).\nBar: Wilson 95% interval.\n"
             "Dashed line and band: the ceiling and its interval,\nwhich is another n=30-per-language condition,\nnot an upper bound.\n\n"
-            "Blue: translators.  Orange: Indonesian pivots\n(su↔jv only).  Grey: references.\n\n"
+            "Blue: translators.  Orange: NLLB and Google\nvia Indonesian.  Grey: references.\n\n"
             "Image prior is invalid\n(the player asks instead of guessing; chance is 17%).",
             va="top", fontsize=8.5, color=INK2, linespacing=1.5, transform=ax.transAxes)
     fig.suptitle("Task success by condition, player Gemini 3.8 Flash, pooled over the four pairs", x=0.01, ha="left", fontsize=12, fontweight="bold")
@@ -138,7 +138,7 @@ def fig2(cells):
         ax.set_xlabel("success %")
     fig.suptitle("Task success per language pair. Dashed line = ceiling of the scored language.",
                  x=0.01, ha="left", fontsize=11, fontweight="bold", y=0.998)
-    fig.text(0.01, 0.976, "n=30 games per dot (95% interval about ±17 points). a → b: a sends, b is scored. a asks b: a is scored, b holds the information. Orange: pivots (su↔jv only).",
+    fig.text(0.01, 0.976, "n=30 games per dot, 20–22 on culture (95% interval about ±17 points). a → b: a sends, b is scored. a asks b: a is scored, b holds the information. Orange: NLLB and Google via Indonesian.",
              fontsize=8.5, color=INK2, ha="left")
     fig.tight_layout(rect=(0, 0, 1, 0.968), h_pad=2.2)
     fig.savefig(FIG / "fig2_per_pair.png", dpi=160)
@@ -220,7 +220,7 @@ def fig4(cells):
     """Sequence: rank the five translators by task success and by each metric; one line per translator."""
     summ = json.load(open(M / "summary.json"))
     names = {"sol": "Sol", "flash-lite": "Flash-Lite", "google": "Google", "nllb": "NLLB", "qwen": "Qwen"}
-    pooled = cells["pooled"]["main2x_sequence"]
+    pooled = cells["pooled"]["poc3_sequence"]
     success = {c: pooled[c]["k"] / pooled[c]["n"] for c in names}
     agg = {c: {m: [0, 0] for m, _, _ in METRICS} for c in names}
     for r in summ["cells"]:
@@ -263,7 +263,7 @@ def fig4(cells):
 def main():
     FIG.mkdir(parents=True, exist_ok=True)
     cells = json.load(open(D / "cells.json"))
-    for f in (fig1, fig2, fig3, fig4):
+    for f in (fig1, fig2, *((fig3, fig4) if (M / "summary.json").exists() else ())):
         f(cells)
         print("wrote", f.__name__)
 
