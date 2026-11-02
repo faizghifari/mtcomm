@@ -1,4 +1,4 @@
-"""Paired (same-item) comparisons for the main2 runs.
+"""Paired (same-item) comparisons for the PoC runs (mtcomm.poc_runs).
 
 Every condition in a run plays the same 30 items per pair, so two conditions can be compared item by
 item: an exact McNemar (two-sided binomial on the discordant games). This removes item difficulty, which
@@ -23,11 +23,9 @@ from itertools import combinations
 
 from mtcomm.languages import scored_lang
 from mtcomm.paths import OUTPUT_ROOT
+from mtcomm.poc_runs import ANALYSIS, available
 
-OUT = OUTPUT_ROOT / "analysis_main2" / "paired.md"
-RUNS = {"MCQ (Flash-Lite)": "main2x_mcq", "Twenty Questions (Flash-Lite)": "main2x_twentyq",
-        "Sequence (3.8 Flash)": "main2x_sequence", "Image (3.8 Flash)": "main2xf_image",
-        "Route (3.8 Flash)": "main2x_route", "Culture (Flash-Lite)": "main2x_culture"}
+OUT = ANALYSIS / "paired.md"
 TRANSLATORS = ["sol", "flash-lite", "nllb", "google", "qwen"]
 
 
@@ -36,6 +34,17 @@ def mcnemar_p(b, c):
     if not n:
         return 1.0
     return min(1.0, 2 * sum(math.comb(n, i) for i in range(min(b, c) + 1)) / 2 ** n)
+
+
+def vs_ceiling(d, task, t, pairs):
+    """Games won and lost against the ceiling of the language scored on each pair: (better, worse, n)."""
+    b = c = n = 0
+    for (p, cond, it), v in d.items():
+        if cond == t and p in pairs and (ce := d.get((scored_lang(task, p), "ceiling", it))) is not None:
+            n += 1
+            b += v == 1 and ce == 0
+            c += v == 0 and ce == 1
+    return b, c, n
 
 
 def load(run):
@@ -63,22 +72,17 @@ def item_icc(d, pairs):
 
 
 def main():
-    md = ["# Paired (same-item) comparisons, main2\n",
+    OUT.parent.mkdir(parents=True, exist_ok=True)
+    md = ["# Paired (same-item) comparisons\n",
           "Exact McNemar on discordant games, pooled over pairs; p uncorrected (10 translator contrasts per task, "
           "Bonferroni within task p < 0.005). Diff in points; `a>b` counts games a solved and b did not.\n"]
-    for name, run in RUNS.items():
+    for name, run, task in available():
         d = load(run)
         pairs = sorted({k[0] for k in d if k[1] == "sol"})
-        task = {"main2x_mcq": "mcq", "main2x_twentyq": "twentyq"}.get(run, "other")
         md.append(f"\n## {name} — {run}\n")
         md.append("| translator vs ceiling | n | diff | games better / worse | p |\n|---|---|---|---|---|")
         for t in TRANSLATORS:
-            b = c = n = 0
-            for (p, cond, it), v in d.items():
-                if cond == t and p in pairs and (ce := d.get((scored_lang(task, p), "ceiling", it))) is not None:
-                    n += 1
-                    b += v == 1 and ce == 0
-                    c += v == 0 and ce == 1
+            b, c, n = vs_ceiling(d, task, t, pairs)
             if n:
                 md.append(f"| {t} | {n} | {100 * (b - c) / n:+.1f} | {b} / {c} | {mcnemar_p(b, c):.3f} |")
         md.append("\n| translator contrast | n | diff | a>b / b>a | p |\n|---|---|---|---|---|")

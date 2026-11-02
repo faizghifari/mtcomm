@@ -5,8 +5,7 @@ fig2_per_pair.png        the same per language pair (rows = tasks, columns = pai
 fig3_metrics.png         MT metrics vs task success: per-game AUC (bootstrap interval) and per-condition Spearman
 fig4_sequence_scatter.png  condition success vs mean metric on sequence, the one task whose conditions can be ranked
 
-Reads outputs/mtcomm/analysis_main2/cells.json (run scripts/analyze_main2.py first), main2x_route records and
-outputs/mtcomm/metrics2/*. Writes outputs/mtcomm/figures/*.png. Needs matplotlib, numpy and scipy.
+Reads cells.json in the analysis directory (run scripts/analyze_main2.py first) and outputs/mtcomm/metrics2/*. Writes outputs/mtcomm/figures/*.png. Needs matplotlib, numpy and scipy.
 
 Colours: the first three slots of the validated categorical palette (blue, orange, aqua; all-pairs CVD safe) and
 neutral greys. Orange is used only for the Indonesian pivots in figures 1-2 and for the second metric in figures 3-4.
@@ -24,8 +23,9 @@ import numpy as np
 
 from mtcomm.languages import scored_lang
 from mtcomm.paths import OUTPUT_ROOT
+from mtcomm.poc_runs import ANALYSIS as D
+from mtcomm.poc_runs import available
 
-D = OUTPUT_ROOT / "analysis_main2"
 M = OUTPUT_ROOT / "metrics2"
 FIG = OUTPUT_ROOT / "figures"
 BLUE, ORANGE, AQUA = "#2a78d6", "#eb6834", "#1baf7a"
@@ -38,9 +38,7 @@ ROWS = [("ceiling", "Ceiling"), ("sol", "Sol"), ("flash-lite", "Flash-Lite"), ("
         ("qwen", "Qwen"), ("nllb-id", "NLLB via id"), ("google-id", "Google via id"), ("passthrough", "Passthrough"),
         ("prior", "Prior (no message)")]
 TRANSLATORS = {"sol", "flash-lite", "google", "nllb", "qwen"}
-TASKS = [("MCQ conversation", "main2x_mcq", "mcq", "Flash-Lite"), ("Twenty Questions", "main2x_twentyq", "twentyq", "Flash-Lite"),
-         ("Sequence ordering", "main2x_sequence", "sequence", "3.8 Flash"), ("Image near-twin", "main2xf_image", "image", "3.8 Flash"),
-         ("Route, easy + hard maps", "main2x_route", "route", "3.8 Flash"), ("Culture (BLEnD)", "main2x_culture", "culture", "Flash-Lite")]
+TASKS = available()  # title, run, task
 
 
 def wilson(k, n, z=1.96):
@@ -64,33 +62,12 @@ def style(ax, xlim=(0, 100)):
     ax.tick_params(axis="y", length=0)
 
 
-def route_easy():
-    """Pooled and per-pair counts (k, n) for the easy route maps; ceiling/prior weighted by pairs that share them."""
-    cell = defaultdict(lambda: [0, 0])
-    for line in open(OUTPUT_ROOT / "main2x_route" / "records.jsonl"):
-        r = json.loads(line)
-        if r["status"] != "done" or r["score"].get("level") != "easy":
-            continue
-        scope = r["eval_lang"] if r["cond"] in ("ceiling", "prior") else r["pair"]
-        c = cell[(scope, r["cond"])]
-        c[0] += bool(r["score"].get("correct"))
-        c[1] += 1
-    pairs = sorted({s for s, c in cell if c == "sol"})
-    pooled = defaultdict(lambda: [0, 0])
-    for (s, c), (k, n) in cell.items():
-        w = sum(p.split("-")[-1] == s for p in pairs) if c in ("ceiling", "prior") else 1
-        pooled[c][0] += w * k
-        pooled[c][1] += w * n
-    return cell, pooled
-
-
 def fig1(cells):
-    pooled = {t[1]: {c: tuple(v.values()) for c, v in cells["pooled"][t[1]].items()} for t in TASKS}
-    easy_cell, easy_pooled = route_easy()
-    panels = [(t[0], f"player: {t[3]}", {c: (v["k"], v["n"]) for c, v in cells["pooled"][t[1]].items()}) for t in TASKS]
-    panels.insert(5, ("Route, easy maps only", "player: 3.8 Flash", {c: tuple(v) for c, v in easy_pooled.items()}))
+    panels = [(t[0], {c: (v["k"], v["n"]) for c, v in cells["pooled"][t[1]].items()}) for t in TASKS]
     fig, axes = plt.subplots(2, 4, figsize=(15, 7.6), sharey=True)
-    for ax, (title, sub, data) in zip(axes.flat, panels):
+    for ax in list(axes.flat)[len(panels):-1]:
+        ax.axis("off")
+    for ax, (title, data) in zip(axes.flat, panels):
         style(ax)
         ce = data["ceiling"]
         lo, hi = wilson(*ce)
@@ -104,8 +81,7 @@ def fig1(cells):
             col = colour(key)
             ax.plot([100 * lo, 100 * hi], [i, i], color=col, lw=1.6, solid_capstyle="round", alpha=0.55 if key != "ceiling" else 0.9)
             ax.plot(100 * k / n, i, "o", ms=6.5, mfc=col, mec="white", mew=1.2, zorder=3)
-        ax.set_title(title, loc="left", pad=17)
-        ax.text(0, 1.02, sub, transform=ax.transAxes, fontsize=8, color=INK2, va="bottom", ha="left")
+        ax.set_title(title, loc="left", pad=6)
         ax.set_xticks([0, 25, 50, 75, 100])
         ax.set_xlabel("success %")
     ax0 = axes.flat[0]
@@ -119,22 +95,21 @@ def fig1(cells):
     ax.text(0, 0.90, "Dot: success rate pooled over the four pairs\n(n=120 per translator, 60 per pivot).\nBar: Wilson 95% interval.\n"
             "Dashed line and band: the ceiling and its interval,\nwhich is another n=30-per-language condition,\nnot an upper bound.\n\n"
             "Blue: translators.  Orange: Indonesian pivots\n(su↔jv only).  Grey: references.\n\n"
-            "Image prior is invalid for 3.8 Flash\n(it asks instead of guessing; chance is 17%).",
+            "Image prior is invalid\n(the player asks instead of guessing; chance is 17%).",
             va="top", fontsize=8.5, color=INK2, linespacing=1.5, transform=ax.transAxes)
-    fig.suptitle("Task success by condition, pooled over su→jv, jv→su, su→ko, ko→su", x=0.01, ha="left", fontsize=12, fontweight="bold")
+    fig.suptitle("Task success by condition, player Gemini 3.8 Flash, pooled over the four pairs", x=0.01, ha="left", fontsize=12, fontweight="bold")
     fig.tight_layout(rect=(0, 0, 1, 0.96))
     fig.savefig(FIG / "fig1_pooled.png", dpi=180)
     plt.close(fig)
 
 
 def fig2(cells):
-    easy_cell, _ = route_easy()
-    rows_t = [(t[0], t[3], t[2], {k.split("|", 1)[1]: (round(v["success"] * v["n"]), v["n"]) for k, v in cells[t[1]].items()
-                                  if v["success"] is not None}) for t in TASKS]
-    rows_t.insert(5, ("Route, easy maps only (n=15)", "3.8 Flash", "route", {f"{s}|{c}": tuple(v) for (s, c), v in easy_cell.items()}))
+    rows_t = [(t[0], t[2], {k.split("|", 1)[1]: (round(v["success"] * v["n"]), v["n"]) for k, v in cells[t[1]].items()
+                            if v["success"] is not None}) for t in TASKS]
+    rows_t = [r for r in rows_t if any(k.split("|")[1] == "sol" for k in r[2])]  # a control with no translators has no pairs
     conds = [r for r in ROWS if r[0] not in ("ceiling", "prior")]
-    fig, axes = plt.subplots(len(rows_t), 4, figsize=(13, 16.5), sharex=True, sharey=True)
-    for ri, (title, player, task, data) in enumerate(rows_t):
+    fig, axes = plt.subplots(len(rows_t), 4, figsize=(13, 2.75 * len(rows_t)), sharex=True, sharey=True)
+    for ri, (title, task, data) in enumerate(rows_t):
         pairs = sorted({k.split("|")[0] for k in data if k.split("|")[1] == "sol"})
         for ci in range(4):
             ax = axes[ri, ci]
@@ -156,14 +131,14 @@ def fig2(cells):
             label = (" asks ".join(p.split("-")) if task in ("mcq", "twentyq") else p.replace("-", " → ").replace(">", " → "))
             ax.set_title(label, fontsize=9, loc="left", pad=3)
             if ci == 0:
-                ax.text(-0.02, 1.32, f"{title}  ({player})", transform=ax.transAxes, fontsize=10, fontweight="bold", ha="left")
+                ax.text(-0.02, 1.32, title, transform=ax.transAxes, fontsize=10, fontweight="bold", ha="left")
     axes[0, 0].set_yticks(range(len(conds)), [c[1] for c in conds])
     axes[0, 0].invert_yaxis()
     for ax in axes[-1]:
         ax.set_xlabel("success %")
     fig.suptitle("Task success per language pair. Dashed line = ceiling of the scored language.",
                  x=0.01, ha="left", fontsize=11, fontweight="bold", y=0.998)
-    fig.text(0.01, 0.976, "n=30 games per dot (95% interval about ±17 points; ±25 for the easy-route rows). a → b: a sends, b is scored. a asks b: a is scored, b holds the information. Orange: pivots (su↔jv only).",
+    fig.text(0.01, 0.976, "n=30 games per dot (95% interval about ±17 points). a → b: a sends, b is scored. a asks b: a is scored, b holds the information. Orange: pivots (su↔jv only).",
              fontsize=8.5, color=INK2, ha="left")
     fig.tight_layout(rect=(0, 0, 1, 0.968), h_pad=2.2)
     fig.savefig(FIG / "fig2_per_pair.png", dpi=160)

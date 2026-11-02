@@ -15,12 +15,12 @@ from collections import defaultdict
 from itertools import combinations
 
 from mtcomm.languages import scored_lang
+from mtcomm.poc_runs import ANALYSIS, available
 from mtcomm.paths import OUTPUT_ROOT
 from mtcomm.players import NOT_UNDERSTOOD, is_not_understood
 
-OUT = OUTPUT_ROOT / "analysis_main2"
-RUNS = ["main2x_mcq", "main2xf_image", "main2x_image", "main2x_culture", "main2x_twentyq", "main2x_route", "main2x_sequence"]
-ROBUST = {"mcq": ["main2x_mcq", "main2r_flash_mcq", "main2r_qwen_mcq"], "image": ["main2xf_image", "main2x_image", "main2r_qwen_image"]}
+OUT = ANALYSIS
+ROBUST = {"mcq": ["main3_mcq", "main2x_mcq"], "twentyq": ["main3_twentyq", "main2x_twentyq"]}  # 3.8 Flash vs 3.1 Flash-Lite
 TRANSLATORS = ["sol", "flash-lite", "nllb", "google", "qwen"]
 ORDER = TRANSLATORS + ["nllb-id", "google-id", "passthrough", "ceiling", "prior"]
 
@@ -122,10 +122,10 @@ def pct(x):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--runs", nargs="*", default=RUNS)
+    ap.add_argument("--runs", nargs="*", default=[t[1] for t in available()])
     args = ap.parse_args()
     OUT.mkdir(parents=True, exist_ok=True)
-    md, dump = ["# Main2 results (monolingual players)\n"], {}
+    md, dump = ["# PoC results (3.8 Flash on every task)\n"], {}
     for run in args.runs:
         cells = cells_of(run)
         if not cells:

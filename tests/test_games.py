@@ -575,3 +575,17 @@ def test_lid_gate_fires_in_a_real_mcq_game_and_only_on_other_language_messages()
     assert play(lambda text, code: {"ok": True, "needs_review": False}) == ["Enya."] * 4
     assert play(lambda text, code: {"ok": False, "needs_review": True}) == ["Enya."] * 4  # unsure: not gated
     assert play(foreign, question="two words") == ["Enya."] * 4  # too short to judge
+
+
+# ---------------------------------------------------------------- analysis
+
+def test_paired_uses_the_ceiling_of_the_language_the_task_scores():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("paired", Path(__file__).resolve().parents[1] / "scripts" / "paired_main2.py")
+    paired = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(paired)
+    # sol won on x; su's ceiling lost it and ko's ceiling won it.
+    d = {("su-ko", "sol", "x"): 1, ("su", "ceiling", "x"): 0, ("ko", "ceiling", "x"): 1}
+    assert paired.vs_ceiling(d, "mcq", "sol", ["su-ko"]) == (1, 0, 1)  # MCQ: su asks and is scored
+    assert paired.vs_ceiling(d, "twentyq", "sol", ["su-ko"]) == (1, 0, 1)
+    assert paired.vs_ceiling(d, "sequence", "sol", ["su-ko"]) == (0, 0, 1)  # sequence: ko receives and is scored

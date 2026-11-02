@@ -7,8 +7,8 @@ Games in different conditions share items, so comparisons are paired within (pai
     posterior mean SD on the logit scale, showing how much item, pair and repeat move the outcome.
 
 Usage: python scripts/mixed_effects.py main2x_sequence [main2x_sequence_r1 ...]   (one task per call; appends to --out)
-       python scripts/mixed_effects.py --all-main2    (one section per main2 task)
-Writes outputs/mtcomm/analysis_main2/mixed_effects.md by default.
+       python scripts/mixed_effects.py --all    (one section per PoC task, mtcomm.poc_runs)
+Writes mixed_effects.md in the analysis directory by default.
 """
 
 import argparse
@@ -23,11 +23,11 @@ from statsmodels.discrete.conditional_models import ConditionalLogit
 from statsmodels.genmod.bayes_mixed_glm import BinomialBayesMixedGLM
 
 from mtcomm.paths import OUTPUT_ROOT
+from mtcomm.poc_runs import ANALYSIS, available
 
 TRANSLATORS = ["sol", "flash-lite", "google", "nllb", "qwen"]
 CONTRASTS = [("sol", "nllb"), ("sol", "qwen"), ("sol", "google"), ("flash-lite", "nllb"), ("flash-lite", "qwen"),
              ("sol", "ceiling"), ("flash-lite", "ceiling"), ("google", "ceiling"), ("nllb", "ceiling"), ("qwen", "ceiling")]
-MAIN2 = ["main2x_mcq", "main2x_twentyq", "main2x_sequence", "main2xf_image", "main2x_route", "main2x_culture"]
 
 
 def load(runs):
@@ -132,13 +132,14 @@ def section(name, runs):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("runs", nargs="*")
-    ap.add_argument("--all-main2", action="store_true")
-    ap.add_argument("--out", default=str(OUTPUT_ROOT / "analysis_main2" / "mixed_effects.md"))
+    ap.add_argument("--all", action="store_true")
+    ap.add_argument("--out", default=str(ANALYSIS / "mixed_effects.md"))
     args = ap.parse_args()
     md = ["# Fixed contrasts and variance components\n",
           "Paired within pair x item x repeat. Holm is over the task's fixed contrast list. The ceiling game of a language is shared by the pairs that end in it, so vs-ceiling tests are slightly anti-conservative. Variance components come from a variational Bayes fit and are rough.\n"]
-    for runs in ([[r] for r in MAIN2] if args.all_main2 else [args.runs]):
-        md += section(runs[0], runs)
+    for runs in ([[t[1]] for t in available()] if args.all else [args.runs]):
+        if load(runs)["cond"].isin(TRANSLATORS).any():  # a control with no translators has nothing to contrast
+            md += section(runs[0], runs)
     open(args.out, "w").write("\n".join(md) + "\n")
     print("\n".join(md))
 
