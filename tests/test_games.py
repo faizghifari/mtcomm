@@ -589,3 +589,16 @@ def test_paired_uses_the_ceiling_of_the_language_the_task_scores():
     assert paired.vs_ceiling(d, "mcq", "sol", ["su-ko"]) == (1, 0, 1)  # MCQ: su asks and is scored
     assert paired.vs_ceiling(d, "twentyq", "sol", ["su-ko"]) == (1, 0, 1)
     assert paired.vs_ceiling(d, "sequence", "sol", ["su-ko"]) == (0, 0, 1)  # sequence: ko receives and is scored
+
+
+def test_pivots_on_every_pair_only_when_asked():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("run_main", Path(__file__).resolve().parents[1] / "scripts" / "run_main.py")
+    run_main = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(run_main)
+    assert "nllb-id" not in run_main.conditions("su", "ko") and "nllb-id" in run_main.conditions("su", "jv")
+    run_main.PIVOTS_ALL = True
+    try:
+        assert {"nllb-id", "google-id"} <= set(run_main.conditions("ko", "su"))
+    finally:
+        run_main.PIVOTS_ALL = False

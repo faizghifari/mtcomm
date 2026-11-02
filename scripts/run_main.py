@@ -3,7 +3,7 @@
 Conditions (one channel each):
   sol, flash-lite       LLM translators (mt-eval's InterpreterAgent brief)
   nllb, google          NLLB-200 3.3B (local GPU) and the Google web endpoint
-  nllb-id, google-id    the same, pivoting through Indonesian (su<->jv pairs only)
+  nllb-id, google-id    the same, pivoting through Indonesian (su<->jv pairs; all pairs with --pivots-all)
   ceiling               both players in the scored player's language, no translator
   prior                 no message reaches the scored player (it answers alone)
 Ceiling and prior depend only on the scored player's language, so they run once per language
@@ -61,7 +61,8 @@ PAIRS = [("su", "jv"), ("jv", "su"), ("su", "ko"), ("ko", "su")]
 # Culture: (local culture, visitor language); the local speaks the culture's language.
 CULTURE_PAIRS = [("West_Java", "jv"), ("West_Java", "ko"), ("South_Korea", "su")]
 TRANSLATORS = ["sol", "flash-lite", "nllb", "google", "qwen"]
-PIVOTS = ["nllb-id", "google-id"]  # su<->jv only
+PIVOTS = ["nllb-id", "google-id"]  # su<->jv only, unless --pivots-all
+PIVOTS_ALL = False
 # USD per million tokens (input, output); batch is half. Gemini 3.8 Flash doubles from 2027-01-01.
 PRICES = {"gemini-3.8-flash": (0.75, 3.75), "gemini-3.5-flash-lite": (0.30, 2.50), "gemini-3.1-flash-lite": (0.25, 1.50),
           "gpt-6.1-sol": (2.0, 10.0)}
@@ -105,7 +106,7 @@ class Channels:
 
 def conditions(a, b):
     conds = list(TRANSLATORS)
-    if {a, b} == {"su", "jv"}:
+    if PIVOTS_ALL or {a, b} == {"su", "jv"}:
         conds += PIVOTS
     return conds
 
@@ -478,7 +479,7 @@ def cmd_report(opts):
 
 
 def main():
-    global ONLY_CONDS, GIVEN_WORDS, PLAYER, MONOLINGUAL
+    global ONLY_CONDS, GIVEN_WORDS, PLAYER, MONOLINGUAL, PIVOTS_ALL
     ap = argparse.ArgumentParser()
     ap.add_argument("cmd", choices=["plan", "batch", "dialogue", "report"])
     ap.add_argument("--run", default="main")
@@ -492,6 +493,7 @@ def main():
     ap.add_argument("--route-level", default="both", choices=["both", "easy", "hard"])
     ap.add_argument("--route-start", type=int, default=0, help="skip this many easy maps")
     ap.add_argument("--conds", nargs="*", default=None, help="only these conditions (e.g. passthrough)")
+    ap.add_argument("--pivots-all", action="store_true", help="Indonesian pivots on every pair, not only su<->jv")
     ap.add_argument("--players", nargs="*", default=[], help="per-language models, e.g. ko=local:exaone-3.5-7.8b-instruct")
     ap.add_argument("--answer-words", action="store_true", help="give the MCQ answerer its yes/no/maybe words")
     ap.add_argument("--player", default=PLAYER, help="API player model (default gemini-3.8-flash)")
@@ -514,6 +516,7 @@ def main():
     ap.add_argument("--seq-questions", type=int, default=3, help="arranger questions in the sequence game")
     args = ap.parse_args()
     ONLY_CONDS, GIVEN_WORDS, PLAYER, MONOLINGUAL = args.conds, args.answer_words, args.player, args.monolingual
+    PIVOTS_ALL = args.pivots_all
     SEQ.update(manifest=args.seq_manifest, max_words=args.seq_words, max_questions=args.seq_questions)
     ITEMS.update(twentyq_pool=args.twentyq_pool, mcq_screen=args.mcq_screen, mcq_questions=args.mcq_questions, mcq_maybe_rule=args.mcq_maybe_rule, mcq_lid_gate=args.mcq_lid_gate,
                  twentyq_questions=args.twentyq_questions, culture_style=args.culture_style,
