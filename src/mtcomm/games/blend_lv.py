@@ -30,12 +30,13 @@ class BlendLocalVisitorGame(GameMaster):
     that they are talking. "explicit" is the first pilot's wording, which told the visitor to
     answer the way local people would and called the local's knowledge a survey; pilot
     transcripts showed both phrasings leaking into the dialogue ("according to the locals",
-    "according to the survey here")."""
+    "according to the survey here"). "targeted" (docs/poc_diagnostics.md) forces the information gap: the visitor's
+    first message must ask the item's question, and the local answers only what was asked, in one sentence."""
 
     def __init__(self, item: dict, local_lang: str, visitor_lang: str, max_questions: int = 3,
                  min_questions: int = 0, prompt_style: str = "neutral"):
         super().__init__(item, {"visitor": visitor_lang, "local": local_lang})
-        if prompt_style not in ("neutral", "explicit"):
+        if prompt_style not in ("neutral", "explicit", "targeted"):
             raise ValueError(f"unknown prompt_style {prompt_style!r}")
         self.prompt_style = prompt_style
         self.max_questions = max_questions  # 0 = no-communication prior
@@ -53,7 +54,7 @@ class BlendLocalVisitorGame(GameMaster):
         return "visitor"
 
     def observe(self, role):
-        if self.prompt_style == "neutral":
+        if self.prompt_style in ("neutral", "targeted"):
             return self._observe_neutral(role)
         if role == "local":
             blocks = []
@@ -99,14 +100,19 @@ class BlendLocalVisitorGame(GameMaster):
                 role, self.roles[role],
                 f"You live in {self.item['local_place']} and speak {name}. A visitor is talking with you. "
                 f"From your own experience, this is what people around here commonly say about these topics, "
-                f"most common first:\n\n" + "\n\n".join(blocks) +
-                f"\n\nReply to the visitor's message naturally, as yourself. Write only in {name}.",
+                f"most common first:\n\n" + "\n\n".join(blocks)
+                + ("\n\nAnswer only what the visitor asks, in one short sentence, from what you know above. Do not bring up "
+                   f"other topics. Write only in {name}." if self.prompt_style == "targeted" else
+                   f"\n\nReply to the visitor's message naturally, as yourself. Write only in {name}."),
                 inbox=list(self.inbox[role]), can_message=True, can_answer=False)
         asked = self._asked()
         can_ask = asked < self.max_questions
         must_ask = asked < self.min_questions
         opts = "\n".join(f"{k}. {v}" for k, v in sorted(self.item["options"].items()))
-        if must_ask:
+        if must_ask and self.prompt_style == "targeted" and asked == 0:
+            budget = (f"Ask the person this question now, in {name}, in your own words: no greeting, no small talk. You "
+                      f"may send up to {self.max_questions - 1} more message(s) after their reply, before answering.")
+        elif must_ask:
             budget = (f"Send the person at least {self.min_questions - asked} more message(s) in {name} before "
                       f"answering (at most {self.max_questions - asked}).")
         elif can_ask:

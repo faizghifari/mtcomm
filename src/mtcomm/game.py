@@ -126,7 +126,8 @@ def run_episode(gm: GameMaster, players: Dict[str, "Player"], channel: Channel,
     message is sent and flagged as a violation. With lang_reject, a message of 3+ words that the
     language check confidently places in another language is rejected the same way. With `refused(text,
     lang)`, a message that says the player could not understand makes the messages it refused unreadable
-    to it from then on (GameMaster.redact_received)."""
+    to it from then on (GameMaster.redact_received); a refusal before the partner has said anything is
+    rejected, since there is nothing to refuse (3.8 Flash narrators did this on 4/30 Korean sequence items)."""
     for _ in range(max_moves):
         if gm.is_done():
             break
@@ -146,6 +147,10 @@ def run_episode(gm: GameMaster, players: Dict[str, "Player"], channel: Channel,
                 if not c["ok"] and not c["needs_review"]:
                     name = lang_info(gm.roles[role]).name
                     violation = f"Your message is not in {name}. Write it only in {name}."
+            if (violation is None and refused is not None and refused(move.content, gm.roles[role])
+                    and not any(t.role != role and t.kind == "message" for t in gm.turns)):
+                name = lang_info(gm.roles[role]).name
+                violation = f"Your partner has not said anything yet, so there is nothing to refuse. Do the task and write your own message in {name}."
             if violation is None or len(rejected) == MAX_REWRITES:
                 break
             rejected.append({"text": move.content, "reason": violation})

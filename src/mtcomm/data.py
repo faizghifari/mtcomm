@@ -231,7 +231,7 @@ def load_blend_items(visitor_lang: Optional[str] = None, n_distractor_questions:
         order = [qid] + rng.sample(pool, min(n_distractor_questions, len(pool)))
         rng.shuffle(order)
         local_knowledge = [
-            {"question": annot[i]["question"], "answers": _top_answers(annot[i]["annotations"], max_answers)}
+            {"question": annot[i]["question"], "answers": _top_answers(annot[i]["annotations"], max_answers), "target": i == qid}
             for i in order
         ]
 
@@ -307,8 +307,8 @@ def load_sequence_items(seed: int = 0, manifest_path=None) -> List[dict]:
 
 # ---------------------------------------------------------------- route redrawing (synthetic maps)
 
-ROUTE_MAPS = next((p for p in (DATA_ROOT / "derived" / "route" / f"maps_v{v}.json" for v in (2, 1)) if p.exists()),
-                  DATA_ROOT / "derived" / "route" / "maps_v1.json")  # v2 = v1 easy maps + redesigned hard maps
+ROUTE_MAPS = next((p for p in (DATA_ROOT / "derived" / "route" / f"maps_v{v}.json" for v in (3, 2, 1)) if p.exists()),
+                  DATA_ROOT / "derived" / "route" / "maps_v1.json")  # v2 = v1 easy maps + redesigned hard maps; v3 = v2 + more easy maps
 ROUTE_LEXICON_DIR = ANNOTATION_DIR / "route_lexicon"
 
 

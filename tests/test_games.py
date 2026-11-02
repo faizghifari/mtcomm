@@ -466,3 +466,39 @@ def test_sequence_items_include_distractors_when_built():
         assert len(it["distractors"]) == 2 and len(it["shuffled"]) == 7
         assert [it["shuffled"][g - 1] for g in it["gold"]] == it["story"]
         assert all(Path(p).exists() for p in it["distractors"])
+
+
+def test_gemini_request_unchanged_without_temperature():
+    """Existing caches stay valid: the request (and its hash) only changes when a temperature is set."""
+    from mtcomm.backends import GeminiBackend
+
+    plain = GeminiBackend("gemini-3.1-flash-lite").build("hi", None, [])
+    assert "temperature" not in plain["generation_config"]
+    assert GeminiBackend("gemini-3.1-flash-lite", temperature=0.7).build("hi", None, [])["generation_config"]["temperature"] == 0.7
+
+
+def test_opening_refusal_is_rewritten():
+    """A refusal before the partner said anything is rejected and rewritten; it is not delivered."""
+    from mtcomm.channels import IdentityChannel
+    from mtcomm.game import run_episode
+    from mtcomm.games.sequence import SequenceGame
+    from mtcomm.players import NOT_UNDERSTOOD, is_not_understood
+
+    item = {"item_id": "x", "story": ["a", "b"], "distractors": [], "shuffled": ["b", "a"], "gold": [2, 1]}
+    gm = SequenceGame(item, "ko", "ko", allow_message=True, max_words=20, max_questions=0)
+    players = {"narrator": ScriptedPlayer([Move("message", NOT_UNDERSTOOD["ko"]), Move("message", "소년이 달린다")]),
+               "arranger": ScriptedPlayer([Move("answer", "2, 1")])}
+    rec = run_episode(gm, players, IdentityChannel(), refused=is_not_understood)
+    first = rec["turns"][0]
+    assert first["source"] == "소년이 달린다"
+    assert first["rejected"] and first["rejected"][0]["text"] == NOT_UNDERSTOOD["ko"]
+
+
+def test_targeted_culture_prompts():
+    from mtcomm.games.blend_lv import BlendLocalVisitorGame
+
+    item = {"item_id": "c", "question": "Q?", "options": {"A": "x", "B": "y"}, "answer_idx": "A", "own_culture_idx": "B",
+            "local_place": "West Java", "local_knowledge": [{"question": "Q?", "answers": [{"answers": ["x"], "count": 3}]}]}
+    gm = BlendLocalVisitorGame(item, "su", "ko", max_questions=3, min_questions=1, prompt_style="targeted")
+    assert "no greeting" in str(gm.observe("visitor"))
+    assert "Answer only what the visitor asks" in str(gm.observe("local"))
