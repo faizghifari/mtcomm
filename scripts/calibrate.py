@@ -32,6 +32,7 @@ VARIANTS = {
     "mcq_v2m": ("mcq", 20, ["ceiling", "passthrough"], ["--mcq-maybe-rule"], "v2 items, answerer told to say maybe rather than refuse"),
     "twentyq_q10": ("twentyq", 20, ["ceiling"], ["--twentyq-pool", "paper140", "--twentyq-questions", "10"], "paper's 140 words, 10 questions"),
     "mcq_gate": ("mcq", 20, ["ceiling", "passthrough"], ["--mcq-lid-gate"], "v2 items, language check as the answerer's gate"),
+    "mcq_gatep": ("mcq", 20, ["passthrough"], ["--mcq-lid-gate"], "language-check gate, untranslated partner"),
     "twentyq_q7": ("twentyq", 20, ["ceiling"], ["--twentyq-pool", "paper140", "--twentyq-questions", "7"], "paper's 140 words, 7 questions"),
     "twentyq": ("twentyq", 20, BOTH, ["--twentyq-pool", "paper140"], "paper's 140 words"),
     "seq_w12": ("sequence", 20, ["ceiling"], ["--seq-manifest", str(BV / "manifest_seq_v3.json"), "--seq-words", "12", *SEQ], "v3, 12 words"),

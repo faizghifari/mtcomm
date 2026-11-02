@@ -143,11 +143,12 @@ class LidGatedPlayer(Player):
     made it worse, while this check gates 100% of untranslated questions and 0.3% of same-language ones
     (docs/poc_diagnostics.md, section 6)."""
 
-    def __init__(self, inner: Player, code: str, check: Callable[[str, str], dict]):
-        self.inner, self.code, self.check = inner, code, check
+    def __init__(self, inner: Player, code: str, check: Callable[[str, str], dict], incoming: Callable[[], Optional[str]]):
+        # incoming: the message just delivered. A game may put it in the instructions and leave Observation.inbox empty.
+        self.inner, self.code, self.check, self.incoming = inner, code, check, incoming
 
     def act(self, obs):
-        message = obs.inbox[-1] if obs.inbox else None
+        message = self.incoming()
         if message and len(message.split()) >= 3:
             c = self.check(message, self.code)
             if not c["ok"] and not c["needs_review"]:

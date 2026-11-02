@@ -557,14 +557,21 @@ def test_wayfind_prior_needs_no_message_and_the_guide_is_held_to_the_limits():
     assert gm.validate("guide", "go straight then left") is None
 
 
-def test_lid_gate_refuses_only_confident_other_language_messages():
+def test_lid_gate_fires_in_a_real_mcq_game_and_only_on_other_language_messages():
+    from mtcomm.games.mugeval import MCQConversationGame
     from mtcomm.players import NOT_UNDERSTOOD, LidGatedPlayer
-    inner = ScriptedPlayer([Move("message", "Enya.")])
-    other = {"ok": False, "needs_review": False}
-    gated = LidGatedPlayer(inner, "su", lambda text, code: other)
-    assert gated.act(Observation("answerer", "su", "x", inbox=["this is english text"])).content == NOT_UNDERSTOOD["su"]
-    assert inner.moves if hasattr(inner, "moves") else True
-    unsure = LidGatedPlayer(ScriptedPlayer([Move("message", "Enya.")]), "su", lambda t, c: {"ok": False, "needs_review": True})
-    assert unsure.act(Observation("answerer", "su", "x", inbox=["maybe english text"])).content == "Enya."
-    short = LidGatedPlayer(ScriptedPlayer([Move("message", "Enya.")]), "su", lambda t, c: other)
-    assert short.act(Observation("answerer", "su", "x", inbox=["two words"])).content == "Enya."
+    item = {"item_id": "x", "passage_a": "p", "question_q": "q", "options_q": ["a", "b", "c", "d"], "gold": 1}
+
+    def play(check, question="this is a question"):
+        gm = MCQConversationGame(item, "en", "su")
+        inner = ScriptedPlayer([Move("message", "Enya.")] * 4)
+        answerer = LidGatedPlayer(inner, "su", check, lambda: gm.inbox["answerer"][-1] if gm.inbox["answerer"] else None)
+        moves = [Move("message", question) for _ in range(4)] + [Move("answer", "[[1]]")]
+        rec = run_episode(gm, {"questioner": ScriptedPlayer(moves), "answerer": answerer}, IdentityChannel(), max_moves=20)
+        return [t["source"] for t in rec["turns"] if t["role"] == "answerer"]
+
+    foreign = lambda text, code: {"ok": False, "needs_review": False}  # noqa: E731
+    assert play(foreign) == [NOT_UNDERSTOOD["su"]] * 4
+    assert play(lambda text, code: {"ok": True, "needs_review": False}) == ["Enya."] * 4
+    assert play(lambda text, code: {"ok": False, "needs_review": True}) == ["Enya."] * 4  # unsure: not gated
+    assert play(foreign, question="two words") == ["Enya."] * 4  # too short to judge

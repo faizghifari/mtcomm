@@ -271,7 +271,8 @@ def build(ep, make_gen):
         # The passage holder has no monolingual prompt; the language check decides what it can read.
         code = gm.roles["answerer"]
         inner = LLMPlayer(players["answerer"].generate, players["answerer"].label, None)
-        players["answerer"] = LidGatedPlayer(inner, code, lid.check)
+        players["answerer"] = LidGatedPlayer(inner, code, lid.check,
+                                             lambda: gm.inbox["answerer"][-1] if gm.inbox["answerer"] else None)
     return gm, players
 
 
