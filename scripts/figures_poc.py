@@ -21,7 +21,6 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
-from scipy.stats import rankdata
 
 from mtcomm.paths import OUTPUT_ROOT
 
@@ -193,98 +192,95 @@ def load_metric_games():
     return ep, outcome
 
 
-def auc_boot(x, y, reps=400, seed=0):
-    x, y = np.asarray(x), np.asarray(y, bool)
+METRICS = [("cometkiwi", "CometKiwi", BLUE), ("xcomet", "XCOMET-XL", ORANGE), ("gemba", "GEMBA-MQM (LLM judge)", AQUA)]
+TASK_ORDER = [("sequence", "Sequence"), ("route", "Route"), ("mcq", "MCQ"), ("twentyq", "Twenty Questions"), ("image", "Image"), ("culture", "Culture")]
 
-    def auc(xs, ys):
-        r = rankdata(xs)
-        n1, n0 = ys.sum(), (~ys).sum()
-        return (r[ys].sum() - n1 * (n1 + 1) / 2) / (n1 * n0)
+
+def gap_ci(x, y, reps=400, seed=0):
+    """Mean metric of successful minus failed games, with a bootstrap 95% interval over games."""
+    x, y = np.asarray(x), np.asarray(y, bool)
     rng = np.random.default_rng(seed)
-    bs = []
+    gaps = []
     for _ in range(reps):
         i = rng.integers(0, len(x), len(x))
         if 0 < y[i].sum() < len(i):
-            bs.append(auc(x[i], y[i]))
-    return auc(x, y), np.percentile(bs, 2.5), np.percentile(bs, 97.5)
-
-
-METRICS = [("cometkiwi", "CometKiwi", BLUE), ("xcomet", "XCOMET-XL", ORANGE), ("gemba", "GEMBA-MQM (LLM judge)", AQUA)]
+            gaps.append(x[i][y[i]].mean() - x[i][~y[i]].mean())
+    return x[y].mean(), x[~y].mean(), np.percentile(gaps, 2.5), np.percentile(gaps, 97.5)
 
 
 def fig3(cells):
+    """Per game: the mean metric of successful vs failed games, one dumbbell per task and metric."""
     ep, outcome = load_metric_games()
-    summ = json.load(open(M / "summary.json"))
-    order = ["sequence", "route", "mcq", "twentyq", "image", "culture"]
-    label = {"sequence": "Sequence", "route": "Route", "mcq": "MCQ", "twentyq": "Twenty Questions", "image": "Image", "culture": "Culture"}
-    rel = {t[2]: cells["reliability"][t[1]]["reliability"] for t in TASKS}
-    fig, (a1, a2) = plt.subplots(1, 2, figsize=(13, 5.4), sharey=True)
-    off = {0: -0.24, 1: 0, 2: 0.24}
-    for ti, task in enumerate(order):
-        keys = [k for k in ep if k[0] == task]
-        for mi, (m, name, col) in enumerate(METRICS):
-            ks = [k for k in keys if ep[k].get(m)]
+    fig, axes = plt.subplots(1, 3, figsize=(14, 4.9), sharey=True)
+    for ax, (m, name, col) in zip(axes, METRICS):
+        style(ax, (0, 1))
+        lo_all, hi_all = 1, 0
+        for ti, (task, label) in enumerate(TASK_ORDER):
+            ks = [k for k in ep if k[0] == task and ep[k].get(m)]
             x = [np.mean(ep[k][m]) for k in ks]
             y = [outcome[k] for k in ks]
-            a, lo, hi = auc_boot(x, y)
-            assert abs(a - summ["auc_success_vs_episode_mean"][f"{task}/{m}"]) < 0.002, (task, m, a)
-            yy = ti + off[mi]
-            a1.plot([lo, hi], [yy, yy], color=col, lw=1.6, alpha=0.6, solid_capstyle="round")
-            a1.plot(a, yy, "o", ms=6.5, mfc=col, mec="white", mew=1.1, zorder=3, label=name if ti == 0 else None)
-            rho, n = summ["cell_spearman_vs_success"][f"{task}/{m}"]
-            z, se = math.atanh(rho), math.sqrt((1 + rho * rho / 2) / (n - 3))
-            a2.plot([math.tanh(z - 1.96 * se), math.tanh(z + 1.96 * se)], [yy, yy], color=col, lw=1.6, alpha=0.6, solid_capstyle="round")
-            a2.plot(rho, yy, "o", ms=6.5, mfc=col, mec="white", mew=1.1, zorder=3)
-    for ax, xl, title, chance in ((a1, (0.2, 0.8), "Per game: does a game's mean metric separate\nsuccessful from failed games?", 0.5),
-                                  (a2, (-1, 1), "Per condition: does a condition's mean metric\nrank conditions like their success rate?", 0)):
-        style(ax, xl)
-        ax.axvline(chance, color=REF, lw=1, ls=(0, (4, 3)))
-        ax.set_title(title, loc="left", fontsize=9.5)
-        ax.set_ylim(len(order) - 0.45, -0.55)
-    a1.set_xlabel("AUC (0.5 = no signal)")
-    a2.set_xlabel("Spearman ρ (24 conditions; 17 for culture)")
-    a1.set_yticks(range(len(order)), [label[t] for t in order])
-    for ti, task in enumerate(order):
-        if rel[task] < 0.3:
-            a2.axhspan(ti - 0.5, ti + 0.5, color=REF_LIGHT, alpha=0.16, lw=0)
-        a2.text(1.02, ti, f"reliability {rel[task]:.2f}" + ("" if rel[task] >= 0.3 else "\nconditions not rankable"), transform=a2.get_yaxis_transform(),
-                va="center", fontsize=8, color=INK2)
-    fig.legend(*a1.get_legend_handles_labels(), loc="upper left", bbox_to_anchor=(0.01, 0.915), ncol=3, frameon=False, fontsize=9)
-    fig.text(0.99, 0.905, "Bars: 95% intervals (bootstrap over games; Fisher approximation over conditions).",
-             ha="right", fontsize=8.5, color=INK2)
-    fig.suptitle("Standard MT metrics do not predict task success; only the LLM judge tracks it, and only where conditions can be ranked",
-                 x=0.01, ha="left", fontsize=11.5, fontweight="bold")
-    fig.tight_layout(rect=(0, 0, 0.93, 0.88))
-    fig.savefig(FIG / "fig3_metrics.png", dpi=180)
+            ok, bad, lo, hi = gap_ci(x, y)
+            ax.plot([bad, ok], [ti, ti], color=GRID if False else REF_LIGHT, lw=2.2, solid_capstyle="round", zorder=1)
+            ax.plot(bad, ti, "o", ms=8.5, mfc="white", mec=REF, mew=1.6, zorder=3)
+            ax.plot(ok, ti, "o", ms=8.5, mfc=col, mec="white", mew=1.2, zorder=3)
+            ax.text(max(ok, bad) + 0.02, ti, f"{ok - bad:+.2f}", va="center", fontsize=8.5, color=INK2)
+            lo_all, hi_all = min(lo_all, ok, bad), max(hi_all, ok, bad)
+        ax.set_xlim(max(0, lo_all - 0.08), min(1, hi_all + 0.14))
+        ax.grid(axis="x", color=GRID, lw=0.8)
+        ax.set_title(name, loc="left")
+        ax.set_xlabel("mean metric score of a game's messages")
+    axes[0].set_yticks(range(len(TASK_ORDER)), [t[1] for t in TASK_ORDER])
+    axes[0].set_ylim(len(TASK_ORDER) - 0.5, -0.5)
+    fig.suptitle("CometKiwi and XCOMET-XL score successful and failed games alike; the LLM judge separates them somewhat", x=0.01, ha="left", fontsize=12.5, fontweight="bold")
+    fig.text(0.01, 0.9, "Open dot: average score in failed games.  Filled dot: average score in successful games.  If a metric predicted success, the filled dot "
+             "would sit clearly to the right.\nNumber: the gap (successful minus failed). Scores run 0–1, higher = better; about 800–1,000 games per task (GEMBA: fewer, it scored a sample of messages).",
+             fontsize=8.8, color=INK2, va="top", linespacing=1.5)
+    fig.tight_layout(rect=(0, 0, 1, 0.84))
+    fig.savefig(FIG / "fig3_metric_gap.png", dpi=180)
     plt.close(fig)
 
 
 def fig4(cells):
+    """Sequence: rank the five translators by task success and by each metric; one line per translator."""
     summ = json.load(open(M / "summary.json"))
-    seq = cells["main2x_sequence"]
-    pts = [(r, seq.get(f"sequence|{r['pair']}|{r['cond']}")) for r in summ["cells"] if r["task"] == "sequence"]
-    pts = [(r, c["success"] * 100) for r, c in pts if c and c["success"] is not None]
-    fig, axes = plt.subplots(1, 3, figsize=(13, 4.4), sharey=True)
+    names = {"sol": "Sol", "flash-lite": "Flash-Lite", "google": "Google", "nllb": "NLLB", "qwen": "Qwen"}
+    pooled = cells["pooled"]["main2x_sequence"]
+    success = {c: pooled[c]["k"] / pooled[c]["n"] for c in names}
+    agg = {c: {m: [0, 0] for m, _, _ in METRICS} for c in names}
+    for r in summ["cells"]:
+        if r["task"] == "sequence" and r["cond"] in names:
+            for m, _, _ in METRICS:
+                if r.get(f"{m}_mean") is not None:
+                    agg[r["cond"]][m][0] += r[f"{m}_mean"] * r["n_messages"]
+                    agg[r["cond"]][m][1] += r["n_messages"]
+    metric = {m: {c: agg[c][m][0] / agg[c][m][1] for c in names} for m, _, _ in METRICS}
+
+    def ranks(d):
+        order = sorted(d, key=lambda c: -d[c])
+        return {c: i + 1 for i, c in enumerate(order)}
+    rs = ranks(success)
+    fig, axes = plt.subplots(1, 3, figsize=(13, 4.8), sharey=True)
     for ax, (m, name, col) in zip(axes, METRICS):
-        xs = np.array([r[f"{m}_mean"] for r, _ in pts])
-        ys = np.array([y for _, y in pts])
-        ax.grid(color=GRID, lw=0.8)
-        ax.set_axisbelow(True)
-        for s in ("top", "right"):
-            ax.spines[s].set_visible(False)
-        qwen = np.array([r["cond"] == "qwen" for r, _ in pts])
-        ax.plot(xs[~qwen], ys[~qwen], "o", ms=7, mfc=col, mec="white", mew=1.1, alpha=0.9)
-        ax.plot(xs[qwen], ys[qwen], "o", ms=9, mfc="none", mec=INK, mew=1.4)
-        ax.plot(xs[qwen], ys[qwen], "o", ms=7, mfc=col, mec="white", mew=1.1)
-        rho = summ["cell_spearman_vs_success"][f"sequence/{m}"][0]
-        ax.set_title(f"{name}:  ρ = {rho:+.2f}", loc="left")
-        ax.set_xlabel("mean metric over the condition's messages")
-    axes[0].set_ylabel("sequence success % (n=30)")
-    fig.suptitle("Sequence ordering, the one task whose conditions can be ranked (reliability 0.73): one dot per translator × pair",
-                 x=0.01, ha="left", fontsize=11.5, fontweight="bold")
-    fig.text(0.01, 0.90, "Ringed dots: Qwen as translator (57–63% success). Their metric scores sit inside the range of the best translators, which is why the neural metrics miss them.", fontsize=8.5, color=INK2)
-    fig.tight_layout(rect=(0, 0, 1, 0.9))
-    fig.savefig(FIG / "fig4_sequence_scatter.png", dpi=180)
+        rm = ranks(metric[m])
+        for c in names:
+            hl = c == "qwen"
+            ax.plot([0, 1], [rs[c], rm[c]], color=ORANGE if hl else REF_LIGHT, lw=3.2 if hl else 1.8, alpha=1 if hl else 0.75, zorder=3 if hl else 2, solid_capstyle="round")
+            for xx, r in ((0, rs[c]), (1, rm[c])):
+                ax.plot(xx, r, "o", ms=8, mfc=ORANGE if hl else REF, mec="white", mew=1.1, zorder=4)
+            ax.text(-0.06, rs[c], f"{names[c]}  {100 * success[c]:.0f}%", ha="right", va="center", fontsize=9, color=ORANGE if hl else INK, fontweight="bold" if hl else None)
+            ax.text(1.06, rm[c], f"{names[c]}  {metric[m][c]:.2f}", ha="left", va="center", fontsize=9, color=ORANGE if hl else INK, fontweight="bold" if hl else None)
+        ax.set_xlim(-0.75, 1.75)
+        ax.set_ylim(5.6, 0.4)
+        ax.axis("off")
+        ax.text(0, 0.0, "ranked by\ntask success", ha="center", va="bottom", fontsize=9, color=INK2)
+        ax.text(1, 0.0, f"ranked by\n{name}", ha="center", va="bottom", fontsize=9, color=INK2, fontweight="bold")
+        ax.text(0.5, 5.75, "best at top", ha="center", va="top", fontsize=8, color=INK2) if m == "xcomet" else None
+    fig.suptitle("Sequence ordering: does the metric order the translators like task success does?", x=0.01, ha="left", fontsize=12.5, fontweight="bold")
+    fig.text(0.01, 0.9, "Rank 1 is best. Left of each panel: translators by pooled success rate. Right: the same translators by the metric's mean score. "
+             "Parallel lines mean the metric agrees.\nGEMBA (an LLM judge) reproduces the success order exactly; CometKiwi and XCOMET-XL put Qwen, "
+             "the translator with the lowest success, at or near the top.", fontsize=8.8, color=INK2, va="top", linespacing=1.5)
+    fig.tight_layout(rect=(0, 0, 1, 0.84))
+    fig.savefig(FIG / "fig4_sequence_ranks.png", dpi=180)
     plt.close(fig)
 
 

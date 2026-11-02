@@ -37,7 +37,7 @@ from mtcomm.players import LLMPlayer
 from mtcomm.replay import BatchGenerate, CallFailed, Pending, ReplayCache, SyncGenerate
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from run_main import PRICES, _tokens  # noqa: E402
+from run_main import PRICES, _tokens, task_items  # noqa: E402
 
 OUT = OUTPUT_ROOT / "mugeval_ceiling"
 LMS = "/mnt/c/Users/user/.lmstudio/bin/lms.exe"
@@ -85,7 +85,7 @@ def spend(cache):
 
 
 def run(args):
-    d = OUT / args.model.replace(":", "_")  # taco:<model>; no colons on the Windows drive
+    d = OUT / (args.model.replace(":", "_") + args.tag)  # taco:<model>; no colons on the Windows drive
     d.mkdir(parents=True, exist_ok=True)
     api = args.model.startswith(API)
     if api or args.model.startswith("taco:"):
@@ -99,8 +99,9 @@ def run(args):
     if args.retry_errors:
         cache.records = {k: r for k, r in cache.records.items() if "text" in r}
     Game, load = TASKS[args.task]
-    eps = [(L, cond, it) for L in args.lang for it in load(L, L, n=args.n, seed=args.seed)
-           for cond in ("ceiling", "prior")]
+    # --screened: the items the main runs use (MCQ screen v2: prior wrong and passage right), instead of a random sample
+    items = (lambda L: task_items(args.task, load, L, L, args.n)) if args.screened else (lambda L: load(L, L, n=args.n, seed=args.seed))
+    eps = [(L, cond, it) for L in args.lang for it in items(L) for cond in ("ceiling", "prior")]
 
     def play(ep, make_gen):
         L, cond, it = ep
@@ -175,6 +176,8 @@ def main():
     r.add_argument("--workers", type=int, default=4)
     r.add_argument("--ctx", type=int, default=8192)
     r.add_argument("--retry-errors", action="store_true")
+    r.add_argument("--screened", action="store_true", help="use the main runs' screened MCQ items, not a random sample")
+    r.add_argument("--tag", default="", help="suffix for the output directory (e.g. __screened)")
     sub.add_parser("report")
     args = ap.parse_args()
     {"run": run, "report": report}[args.cmd](args)
