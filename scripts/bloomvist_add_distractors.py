@@ -6,7 +6,7 @@ A page is skipped when it nearly duplicates a story page (16x16 grey MAE < 4, as
 smaller than 200 px, or fails to download. Writes manifest_seq_v3.json with "distractors" per story;
 stories without k usable pages are listed and left out.
 
-Usage: python scripts/bloomvist_add_distractors.py [--k 2] [--seed 0]
+Usage: python scripts/bloomvist_add_distractors.py [--k 2] [--seed 0] [--in manifest_seq_v2.json] [--out-name manifest_seq_v3.json]
 """
 
 import argparse
@@ -27,8 +27,10 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--k", type=int, default=2)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--in", dest="source", default="manifest_seq_v2.json")
+    ap.add_argument("--out-name", default="manifest_seq_v3.json")
     args = ap.parse_args()
-    man = json.load(open(OUT / "manifest_seq_v2.json", encoding="utf-8"))
+    man = json.load(open(OUT / args.source, encoding="utf-8"))
     d = json.load(open(SRC, encoding="utf-8"))
     images = {i["id"]: i for i in d["images"]}
     anns = defaultdict(list)
@@ -49,7 +51,8 @@ def main():
         for a in cand:
             if len(chosen) == args.k:
                 break
-            name = f"{sid}_d{len(chosen) + 1}.jpg"
+            # New file names for another k: a failed download here must not overwrite another manifest's pictures.
+            name = f"{sid}_d{len(chosen) + 1}.jpg" if args.k == 2 else f"{sid}_k{args.k}d{len(chosen) + 1}.jpg"
             raw = fetch(images[a["photo_flickr_id"]]["url_o"])
             if raw is None:
                 continue
@@ -69,8 +72,8 @@ def main():
         else:
             dropped.append((sid, s["title"], len(cand), len(chosen)))
     out = dict(man, version=3, distractors_per_story=args.k, stories=kept)
-    json.dump(out, open(OUT / "manifest_seq_v3.json", "w", encoding="utf-8"), ensure_ascii=False, indent=1)
-    print(f"{len(kept)} stories with {args.k} same-book distractors -> {OUT / 'manifest_seq_v3.json'}")
+    json.dump(out, open(OUT / args.out_name, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+    print(f"{len(kept)} stories with {args.k} same-book distractors -> {OUT / args.out_name}")
     for x in dropped:
         print("  dropped (story, title, candidate pages, usable):", x)
 

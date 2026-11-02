@@ -100,10 +100,11 @@ def try_story(sid, book, s_anns, images, albums, book_langs, seed, pool, kept_th
     pids = [a["photo_flickr_id"] for a in anns]
     windows = [i for i in range(len(pids) - N_IMG + 1) if len(set(pids[i:i + N_IMG])) == N_IMG]
     if not windows:
-        return "fewer than 5 distinct photos", None, None
+        return f"fewer than {N_IMG} distinct photos", None, None
     start = random.Random(f"{seed}:{sid}").choice(windows)
     win = anns[start:start + N_IMG]
-    names = [f"{sid}_{k}.jpg" for k in range(1, N_IMG + 1)]
+    # Another page count gets its own file names, so that its window never overwrites a 5-page manifest's pictures.
+    names = [f"{sid}_{k}.jpg" if N_IMG == 5 else f"{sid}_p{N_IMG}_{k}.jpg" for k in range(1, N_IMG + 1)]
     paths = [OUT_IMG / n for n in names]
     urls = [images[a["photo_flickr_id"]]["url_o"] for a in win]
 
@@ -155,7 +156,9 @@ def main():
     ap.add_argument("--n", type=int, default=30)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--out-name", default="manifest_seq_v1.json", help="manifest file name (images are shared)")
+    ap.add_argument("--n-images", type=int, default=N_IMG, help="pages per story")
     args = ap.parse_args()
+    globals()["N_IMG"] = args.n_images
 
     d = json.load(open(SRC, encoding="utf-8"))
     albums = {a["id"]: a for a in d["albums"]}
@@ -217,7 +220,7 @@ def main():
             pool_stats["licence excluded"] += 1
             continue
         if len(anns.get(sid, [])) < N_IMG:
-            pool_stats["fewer than 5 pages"] += 1
+            pool_stats[f"fewer than {N_IMG} pages"] += 1
             continue
         cands.append((sid, book))
     print(f"candidate pool: {len(cands)} stories; excluded before download: {dict(pool_stats)}")
