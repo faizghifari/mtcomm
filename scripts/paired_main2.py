@@ -10,7 +10,7 @@ Also reports the item effect: the intraclass correlation of success across the 5
 p-values are NOT corrected: 10 translator contrasts per task (60 across the six tasks); Bonferroni within a
 task is p < 0.005. Games are single samples (Gemini default sampling, one run per cell), so item-sampling
 noise is removed by pairing but sampling noise of the players is not separated from translation effects.
-The ceiling of a receiving language is re-used by every pair that shares it (su twice), so the vs-ceiling
+The ceiling of the scored language is re-used by every pair that shares it (su twice), so the vs-ceiling
 tests are slightly anti-conservative.
 
 Usage: python scripts/paired_main2.py   -> outputs/mtcomm/analysis_main2/paired.md
@@ -21,6 +21,7 @@ import math
 from collections import defaultdict
 from itertools import combinations
 
+from mtcomm.languages import scored_lang
 from mtcomm.paths import OUTPUT_ROOT
 
 OUT = OUTPUT_ROOT / "analysis_main2" / "paired.md"
@@ -49,10 +50,6 @@ def load(run):
     return d
 
 
-def receiver(pair):
-    return pair.split(">")[-1].split("-")[-1]  # culture pairs are "<culture>><visitor>"
-
-
 def item_icc(d, pairs):
     rows = [[d.get((p, t, it)) for t in TRANSLATORS] for p in pairs for it in {k[2] for k in d if k[0] == p}]
     rows = [r for r in rows if None not in r]
@@ -72,12 +69,13 @@ def main():
     for name, run in RUNS.items():
         d = load(run)
         pairs = sorted({k[0] for k in d if k[1] == "sol"})
+        task = {"main2x_mcq": "mcq", "main2x_twentyq": "twentyq"}.get(run, "other")
         md.append(f"\n## {name} — {run}\n")
         md.append("| translator vs ceiling | n | diff | games better / worse | p |\n|---|---|---|---|---|")
         for t in TRANSLATORS:
             b = c = n = 0
             for (p, cond, it), v in d.items():
-                if cond == t and p in pairs and (ce := d.get((receiver(p), "ceiling", it))) is not None:
+                if cond == t and p in pairs and (ce := d.get((scored_lang(task, p), "ceiling", it))) is not None:
                     n += 1
                     b += v == 1 and ce == 0
                     c += v == 0 and ce == 1

@@ -22,6 +22,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
+from mtcomm.languages import scored_lang
 from mtcomm.paths import OUTPUT_ROOT
 
 D = OUTPUT_ROOT / "analysis_main2"
@@ -128,13 +129,12 @@ def fig1(cells):
 
 def fig2(cells):
     easy_cell, _ = route_easy()
-    rows_t = [(t[0], t[3], {k.split("|", 1)[1]: (round(v["success"] * v["n"]), v["n"]) for k, v in cells[t[1]].items()
-                           if v["success"] is not None}) for t in TASKS]
-    easy = ("Route, easy maps only (n=15)", "3.8 Flash", {f"{s}|{c}": tuple(v) for (s, c), v in easy_cell.items()})
-    rows_t.insert(5, (easy[0], easy[1], {k: (v[0], v[1]) for k, v in easy[2].items()}))
+    rows_t = [(t[0], t[3], t[2], {k.split("|", 1)[1]: (round(v["success"] * v["n"]), v["n"]) for k, v in cells[t[1]].items()
+                                  if v["success"] is not None}) for t in TASKS]
+    rows_t.insert(5, ("Route, easy maps only (n=15)", "3.8 Flash", "route", {f"{s}|{c}": tuple(v) for (s, c), v in easy_cell.items()}))
     conds = [r for r in ROWS if r[0] not in ("ceiling", "prior")]
     fig, axes = plt.subplots(len(rows_t), 4, figsize=(13, 16.5), sharex=True, sharey=True)
-    for ri, (title, player, data) in enumerate(rows_t):
+    for ri, (title, player, task, data) in enumerate(rows_t):
         pairs = sorted({k.split("|")[0] for k in data if k.split("|")[1] == "sol"})
         for ci in range(4):
             ax = axes[ri, ci]
@@ -142,7 +142,7 @@ def fig2(cells):
                 ax.axis("off")
                 continue
             p = pairs[ci]
-            recv = p.split(">")[-1].split("-")[-1]
+            recv = scored_lang(task, p)
             style(ax)
             ce = data.get(f"{recv}|ceiling")
             if ce:
@@ -153,16 +153,17 @@ def fig2(cells):
                     continue
                 ax.plot(100 * v[0] / v[1], i, "o", ms=6.5, mfc=colour(key), mec="white", mew=1.1, zorder=3)
             ax.set_xticks([0, 50, 100])
-            ax.set_title(p.replace("-", " → ").replace(">", " → "), fontsize=9, loc="left", pad=3)
+            label = (" asks ".join(p.split("-")) if task in ("mcq", "twentyq") else p.replace("-", " → ").replace(">", " → "))
+            ax.set_title(label, fontsize=9, loc="left", pad=3)
             if ci == 0:
                 ax.text(-0.02, 1.32, f"{title}  ({player})", transform=ax.transAxes, fontsize=10, fontweight="bold", ha="left")
     axes[0, 0].set_yticks(range(len(conds)), [c[1] for c in conds])
     axes[0, 0].invert_yaxis()
     for ax in axes[-1]:
         ax.set_xlabel("success %")
-    fig.suptitle("Task success per language pair (sender → receiver; the receiver is scored). Dashed line = ceiling of the receiving language.",
+    fig.suptitle("Task success per language pair. Dashed line = ceiling of the scored language.",
                  x=0.01, ha="left", fontsize=11, fontweight="bold", y=0.998)
-    fig.text(0.01, 0.976, "n=30 games per dot (95% interval about ±17 points; ±25 for the easy-route rows). Orange: Indonesian pivots (su↔jv only).",
+    fig.text(0.01, 0.976, "n=30 games per dot (95% interval about ±17 points; ±25 for the easy-route rows). a → b: a sends, b is scored. a asks b: a is scored, b holds the information. Orange: pivots (su↔jv only).",
              fontsize=8.5, color=INK2, ha="left")
     fig.tight_layout(rect=(0, 0, 1, 0.968), h_pad=2.2)
     fig.savefig(FIG / "fig2_per_pair.png", dpi=160)

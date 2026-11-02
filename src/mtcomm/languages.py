@@ -42,3 +42,12 @@ def get(code: str) -> Language:
         return LANGUAGES[code]
     except KeyError:
         raise KeyError(f"unknown language {code!r}; known: {sorted(LANGUAGES)}") from None
+
+
+def scored_lang(task: str, pair: str) -> str:
+    """The scored player's language for a task and pair label. On MCQ and Twenty Questions "a-b" means a asks and is
+    scored while b holds the information; on the other tasks a sends and b, the receiver, is scored. Culture pairs are
+    "<culture>><visitor>" and the visitor is scored."""
+    if task in ("mcq", "twentyq"):
+        return pair.split("-")[0]
+    return pair.split(">")[-1].split("-")[-1]

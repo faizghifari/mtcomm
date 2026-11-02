@@ -1,14 +1,15 @@
 """Per-language-pair success tables for the main2 runs (appendix of the short PoC summary).
 
-One compact table per task: rows = pair (sender-receiver; the receiver is the scored player), columns =
-conditions, cells = success % at n=30 games (ceiling and prior: n=30 per receiving language, shared by the pairs
-that end in it). Route also gets an easy-maps-only table (n=15 per cell). Reads
+One compact table per task: rows = pair (scored language: mtcomm.languages.scored_lang), columns =
+conditions, cells = success % at n=30 games (ceiling and prior: n=30 per scored language, shared by the pairs
+that score it). Route also gets an easy-maps-only table (n=15 per cell). Reads
 outputs/mtcomm/analysis_main2/cells.json (run scripts/analyze_main2.py first) and the route records.
 Writes outputs/mtcomm/analysis_main2/pair_breakdown.md.
 """
 
 import json
 
+from mtcomm.languages import scored_lang
 from mtcomm.paths import OUTPUT_ROOT
 
 D = OUTPUT_ROOT / "analysis_main2"
@@ -46,8 +47,9 @@ def route_easy():
 def main():
     cells = json.load(open(D / "cells.json"))
     md = ["# Per-pair results (main2)\n",
-          "Success %, n=30 games per cell (95% interval about ±17 points). `a-b`: a sends, b receives; the receiver is scored. "
-          "Ceiling and prior belong to the receiving language (shared by the pairs that end in it). Pivots exist for su↔jv only.\n"]
+          "Success %, n=30 games per cell (95% interval about ±17 points). Sequence, image and route: `a-b` means a sends and b, "
+          "the receiver, is scored. MCQ and Twenty Questions: a asks and is scored, b holds the information, and both directions "
+          "are translated. Ceiling and prior belong to the scored language. Pivots exist for su↔jv only.\n"]
     for title, run, player in TASKS:
         c = cells.get(run)
         if not c:
@@ -60,7 +62,7 @@ def main():
         md.append("| pair | " + " | ".join(HEAD[x] for x in conds) + " |")
         md.append("|---" * (len(conds) + 1) + "|")
         for p in pairs:
-            recv = p.split(">")[-1].split("-")[-1]
+            recv = scored_lang(task, p)
             row = []
             for x in conds:
                 v = c.get(f"{task}|{recv if x in ('ceiling', 'prior') else p}|{x}")

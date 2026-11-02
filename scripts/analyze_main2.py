@@ -14,6 +14,7 @@ import math
 from collections import defaultdict
 from itertools import combinations
 
+from mtcomm.languages import scored_lang
 from mtcomm.paths import OUTPUT_ROOT
 from mtcomm.players import NOT_UNDERSTOOD, is_not_understood
 
@@ -138,7 +139,7 @@ def main():
         md.append("| pair | " + " | ".join(conds) + " |")
         md.append("|---" * (len(conds) + 1) + "|")
         for p in pairs:
-            recv = p.split(">")[-1].split("-")[-1]  # culture pairs are "<culture>><visitor>"
+            recv = scored_lang(task, p)
             row = []
             for c in conds:
                 k = (task, recv if c in ("ceiling", "prior") else p, c)
@@ -159,7 +160,7 @@ def main():
             pool[c][1] += v["n"]
         for (tk, p, c), v in cells.items():
             if c in ("ceiling", "prior") and v["success"] is not None:
-                w = sum(1 for q in pairs if q.split(">")[-1].split("-")[-1] == p)  # pairs that share it
+                w = sum(1 for q in pairs if scored_lang(task, q) == p)  # pairs that share it
                 pool[c][0] += w * round(v["success"] * v["n"])
                 pool[c][1] += w * v["n"]
         md.append("\nPooled over pairs (ceiling/prior weighted by the pairs that share them):\n")
@@ -174,7 +175,7 @@ def main():
         md.append("| pair | " + " | ".join(t for t in TRANSLATORS if t in conds) + " |")
         md.append("|---" * (1 + sum(t in conds for t in TRANSLATORS)) + "|")
         for p in pairs:
-            recv = p.split(">")[-1].split("-")[-1]
+            recv = scored_lang(task, p)
             ce, pr = cells.get((task, recv, "ceiling")), cells.get((task, recv, "prior"))
             row = []
             for t in TRANSLATORS:
