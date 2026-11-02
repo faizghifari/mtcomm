@@ -134,7 +134,7 @@ MCQ_SCREEN = next((p for p in (DATA_ROOT / "derived" / "mcq" / f"mcq_screen_v{v}
 
 # --twentyq-pool / --mcq-screen / --culture-style / --culture-screen: fixes from docs/poc_diagnostics.md, opt-in so that
 # existing runs replay unchanged.
-ITEMS = {"twentyq_pool": "all", "mcq_screen": None, "mcq_questions": None, "culture_style": "neutral", "culture_screen": None}
+ITEMS = {"twentyq_pool": "all", "mcq_screen": None, "mcq_questions": None, "mcq_maybe_rule": False, "twentyq_questions": None, "culture_style": "neutral", "culture_screen": None}
 
 
 def task_items(task, load, a, b, n):
@@ -226,8 +226,9 @@ def episodes(opts):
                                     lambda it=it, a=a, lb=lb, cond=cond, Game=Game: (
                                         Game(it, a, lb, allow_message=cond != "prior",
                                              **({"given_words": True} if GIVEN_WORDS else {}),
-                                             **({"max_questions": ITEMS["mcq_questions"]}
-                                                if task == "mcq" and ITEMS["mcq_questions"] else {})),
+                                             **({"max_questions": ITEMS[f"{task}_questions"]}
+                                                if ITEMS[f"{task}_questions"] else {}),
+                                             **({"maybe_rule": True} if task == "mcq" and ITEMS["mcq_maybe_rule"] else {})),
                                         ["questioner", "answerer"]))
     if "culture" in tasks:
         blend = load_blend_items()
@@ -491,6 +492,8 @@ def main():
     ap.add_argument("--twentyq-pool", default="all", choices=["all", "paper140"], help="20Q word pool (paper140 = MuG-Eval's)")
     ap.add_argument("--mcq-screen", default=None, help="screen file for MCQ items, or 'random' for no screen")
     ap.add_argument("--mcq-questions", type=int, default=None, help="MCQ question count (default: MuG-Eval's 4)")
+    ap.add_argument("--mcq-maybe-rule", action="store_true", help="tell the MCQ answerer to say maybe, not refuse, when the passage does not settle a question")
+    ap.add_argument("--twentyq-questions", type=int, default=None, help="Twenty Questions question budget (default 20)")
     ap.add_argument("--culture-style", default="neutral", choices=["neutral", "explicit", "targeted"])
     ap.add_argument("--culture-screen", default=None, help="screen file for culture items (scripts/culture_screen.py)")
     ap.add_argument("--repeat", type=int, default=0,
@@ -504,7 +507,8 @@ def main():
     args = ap.parse_args()
     ONLY_CONDS, GIVEN_WORDS, PLAYER, MONOLINGUAL = args.conds, args.answer_words, args.player, args.monolingual
     SEQ.update(manifest=args.seq_manifest, max_words=args.seq_words, max_questions=args.seq_questions)
-    ITEMS.update(twentyq_pool=args.twentyq_pool, mcq_screen=args.mcq_screen, mcq_questions=args.mcq_questions, culture_style=args.culture_style,
+    ITEMS.update(twentyq_pool=args.twentyq_pool, mcq_screen=args.mcq_screen, mcq_questions=args.mcq_questions, mcq_maybe_rule=args.mcq_maybe_rule,
+                 twentyq_questions=args.twentyq_questions, culture_style=args.culture_style,
                  culture_screen=args.culture_screen)
     PLAYERS.update(p.split("=", 1) for p in args.players)
     pairs = [tuple(p.split("-")) for p in args.pairs] if args.pairs else PAIRS

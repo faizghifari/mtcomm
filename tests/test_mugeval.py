@@ -287,3 +287,13 @@ def test_mcq_question_budget_is_a_knob_and_the_default_prompt_is_unchanged(mcq_i
     more = MCQConversationGame(mcq_item, "en", "id", max_questions=8)
     assert "exactly 8 questions" in more.observe("questioner").instructions
     assert more.max_questions == 8 and MCQConversationGame.max_questions == 4
+
+
+def test_mcq_maybe_rule_is_opt_in(mcq_item):
+    from mtcomm.games.mugeval import MCQConversationGame
+    def answerer(**kw):
+        gm = MCQConversationGame(mcq_item, "en", "id", **kw)
+        gm.inbox["answerer"].append("Is it about cats?")
+        return gm.observe("answerer").instructions
+    assert "only for a question" not in answerer()
+    assert "only for a question clearly written in another language" in answerer(maybe_rule=True)

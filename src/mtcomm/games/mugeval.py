@@ -47,9 +47,12 @@ class _QAGame(GameMaster):
     max_questions = 20
 
     def __init__(self, item: dict, questioner_lang: str, answerer_lang: str, allow_message: bool = True,
-                 given_words: bool = False, original: bool = False, max_questions: int = None):
+                 given_words: bool = False, original: bool = False, max_questions: int = None, maybe_rule: bool = False):
         super().__init__(item, {"questioner": questioner_lang, "answerer": answerer_lang})
         self.allow_message = allow_message
+        # maybe_rule: tells the MCQ answerer that "the passage does not say" is "maybe", not "I don't understand". 3.8 Flash
+        # with the monolingual prompt refused 34% of questions in its own language without it (docs/poc_diagnostics.md).
+        self.maybe_rule = maybe_rule
         if max_questions is not None:  # a difficulty knob; None keeps the task's default and its prompt
             self.max_questions = max_questions
         self.words = ANSWER_WORDS.get(answerer_lang) if given_words else None
@@ -155,6 +158,13 @@ class TwentyQuestionsGame(_QAGame):
 class MCQConversationGame(_QAGame):
     max_questions = 4  # MuG-Eval's released prompt: exactly 4 questions, one per choice
 
+    def _maybe_rule(self, name):
+        if not self.maybe_rule:
+            return ""
+        return (f" If the question is in {name} but the passage does not settle it, or the question seems odd or badly "
+                f"worded, respond with {self._maybe(name)} Saying that you do not understand is only for a question "
+                f"clearly written in another language.")
+
     def _question_rule(self):
         if self.max_questions == 4:  # MuG-Eval's wording, unchanged so that existing runs replay
             return ("You must ask exactly 4 questions (one corresponding to each answer choice) before making your "
@@ -184,7 +194,7 @@ class MCQConversationGame(_QAGame):
                 "any external knowledge or make assumptions beyond what is explicitly stated in the text. Your response "
                 f"must be in {name} and limited to {self._answer_choice(name)} Do not provide any explanation or "
                 "additional words. If the query contains two or more questions asked simultaneously, consider it "
-                f"invalid and respond with {self._maybe(name)}\n\n"
+                f"invalid and respond with {self._maybe(name)}{self._maybe_rule(name)}\n\n"
                 f"<|Passage|>\n{self.item['passage_a']}\n\n<|Language|>\n{name}\n\n<|Question|>\n{q}",
                 can_message=True, can_answer=False)
         name = lang(self.roles[role]).name

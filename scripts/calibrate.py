@@ -29,6 +29,8 @@ BOTH = ["ceiling", "prior"]
 VARIANTS = {
     "mcq_q8": ("mcq", 20, ["ceiling"], ["--mcq-questions", "8"], "v2 items, 8 questions"),
     "mcq_w2": ("mcq", 20, BOTH, ["--mcq-screen", str(MCQ / "mcq_screen_38_w2.json")], "prior wrong in 2 of 3 languages, 4 questions"),
+    "mcq_v2m": ("mcq", 20, ["ceiling", "passthrough"], ["--mcq-maybe-rule"], "v2 items, answerer told to say maybe rather than refuse"),
+    "twentyq_q10": ("twentyq", 20, ["ceiling"], ["--twentyq-pool", "paper140", "--twentyq-questions", "10"], "paper's 140 words, 10 questions"),
     "twentyq": ("twentyq", 20, BOTH, ["--twentyq-pool", "paper140"], "paper's 140 words"),
     "seq_w12": ("sequence", 20, ["ceiling"], ["--seq-manifest", str(BV / "manifest_seq_v3.json"), "--seq-words", "12", *SEQ], "v3, 12 words"),
     "seq_k4": ("sequence", 20, BOTH, ["--seq-manifest", str(BV / "manifest_seq_v3k4.json"), "--seq-words", "20", *SEQ], "4 distractors, 20 words"),
