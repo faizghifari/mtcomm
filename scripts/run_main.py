@@ -60,7 +60,8 @@ CULTURE_PAIRS = [("West_Java", "jv"), ("West_Java", "ko"), ("South_Korea", "su")
 TRANSLATORS = ["sol", "flash-lite", "nllb", "google", "qwen"]
 PIVOTS = ["nllb-id", "google-id"]  # su<->jv only
 # USD per million tokens (input, output); batch is half. Gemini 3.8 Flash doubles from 2027-01-01.
-PRICES = {"gemini-3.8-flash": (0.75, 3.75), "gemini-3.1-flash-lite": (0.25, 1.50), "gpt-6.1-sol": (2.0, 10.0)}
+PRICES = {"gemini-3.8-flash": (0.75, 3.75), "gemini-3.5-flash-lite": (0.30, 2.50), "gemini-3.1-flash-lite": (0.25, 1.50),
+          "gpt-6.1-sol": (2.0, 10.0)}
 TRANSLATOR_MODELS = {"sol": "gpt-6.1-sol", "flash-lite": "gemini-3.1-flash-lite", "qwen": "taco:qwen3.8-27b"}
 
 
