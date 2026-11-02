@@ -502,3 +502,56 @@ def test_targeted_culture_prompts():
     gm = BlendLocalVisitorGame(item, "su", "ko", max_questions=3, min_questions=1, prompt_style="targeted")
     assert "no greeting" in str(gm.observe("visitor"))
     assert "Answer only what the visitor asks" in str(gm.observe("local"))
+
+
+# ---------------------------------------------------------------- directions game
+
+def _wayfind_item(level="mid", seed=1):
+    import random
+
+    from mtcomm.streetmap import make_street_map
+    m = make_street_map(random.Random(seed), level, "t01")
+    return {"item_id": "t01", "map": m, "guide_image": {"en": "g.png", "id": "g.png"}, "seeker_image": {"en": "s.png", "id": "s.png"}}
+
+
+def test_street_map_route_has_the_level_turns_and_a_labelled_target():
+    from mtcomm.streetmap import LEVELS
+    for level, turns in LEVELS.items():
+        m = _wayfind_item(level)["map"]
+        assert sum(isinstance(x, str) for x in m["moves"]) == turns
+        assert len({tuple(p) for p in m["path"]}) == len(m["path"])  # no intersection twice
+        assert len(m["candidates"]) == 8
+        assert m["candidates"][m["gold"]]["building"] == m["target"]
+        assert m["candidates"][m["gold"]]["kind"] == "target"
+        assert any(c["kind"] == "flip" for c in m["candidates"].values())
+        taken = {l["building"] for l in m["landmarks"]}
+        assert not taken & {c["building"] for c in m["candidates"].values()}  # a landmark never hides a candidate
+
+
+def test_street_map_keeps_every_route_step_on_a_street():
+    m = _wayfind_item("hard", seed=3)["map"]
+    edges = {tuple(sorted((tuple(a), tuple(b)))) for a, b in m["edges"]}
+    assert all(tuple(sorted((tuple(a), tuple(b)))) in edges for a, b in zip(m["path"], m["path"][1:]))
+
+
+def test_wayfind_flow_question_then_answer_and_score_kinds():
+    from mtcomm.games.wayfind import WayfindGame
+    it = _wayfind_item()
+    wrong = next(k for k, v in it["map"]["candidates"].items() if v["kind"] == "flip")
+    gm = WayfindGame(it, "en", "id")
+    rec = run_episode(gm, {"guide": ScriptedPlayer([Move("message", "Go straight, then left."), Move("message", "Yes.")]),
+                           "seeker": ScriptedPlayer([Move("message", "Which side?"), Move("answer", f"[[{wrong}]]")])},
+                      IdentityChannel(), max_moves=10)
+    assert rec["finished"] and rec["score"]["correct"] is False and rec["score"]["guess_kind"] == "flip"
+    assert rec["score"]["questions_asked"] == 1
+
+
+def test_wayfind_prior_needs_no_message_and_the_guide_is_held_to_the_limits():
+    from mtcomm.games.wayfind import WayfindGame
+    it = _wayfind_item()
+    prior = WayfindGame(it, "en", "en", allow_message=False)
+    assert prior.next_role() == "seeker" and prior.observe("seeker").can_message is False
+    gm = WayfindGame(it, "en", "id", max_words=5)
+    assert "words" in gm.validate("guide", "one two three four five six")
+    assert "line breaks" in gm.validate("guide", "go on\nthen left")
+    assert gm.validate("guide", "go straight then left") is None

@@ -357,3 +357,27 @@ def load_route_items(langs=("en",), maps_path=None) -> List[dict]:
                 it[f"{who}_image"][lang] = str(p)
         items.append(it)
     return items
+
+
+def load_wayfind_items(langs=("en",), maps_path=None) -> List[dict]:
+    """Directions-game items with landmark labels and map images per language (images drawn on first use)."""
+    from .streetmap import draw_street_map
+
+    path = Path(maps_path or DATA_ROOT / "derived" / "wayfind" / "maps_v1.json")
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    lex = _route_lexicon()
+    img_dir = path.parent / "images"
+    img_dir.mkdir(parents=True, exist_ok=True)
+    items = []
+    for m in doc["maps"]:
+        it = {"item_id": m["map_id"], "map": m, "guide_image": {}, "seeker_image": {}}
+        for lang in langs:
+            labels = {l["name"]: route_label(l["name"], lang, lex) for l in m["landmarks"]}
+            tag = hashlib.sha256(json.dumps(labels, sort_keys=True, ensure_ascii=False).encode()).hexdigest()[:8]
+            for who in ("guide", "seeker"):
+                p = img_dir / f"{m['map_id']}_{who}_{lang}_{tag}.png"
+                if not p.exists():
+                    draw_street_map(m, who, p, label=labels.get)
+                it[f"{who}_image"][lang] = str(p)
+        items.append(it)
+    return items

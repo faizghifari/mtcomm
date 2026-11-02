@@ -35,7 +35,7 @@ from pathlib import Path
 from mtcomm import lid
 from mtcomm.backends import make_backend
 from mtcomm.channels import GoogleWebChannel, IdentityChannel, NLLBChannel, NoChannel, PivotChannel, llm_translator
-from mtcomm.data import load_blend_items, load_image_items, load_route_items, load_sequence_items
+from mtcomm.data import load_blend_items, load_image_items, load_route_items, load_sequence_items, load_wayfind_items
 from mtcomm.data_mugeval import load_mcq_items, load_twentyq_items
 from mtcomm.game import run_episode
 from mtcomm.games.blend_lv import BlendLocalVisitorGame
@@ -43,6 +43,7 @@ from mtcomm.games.image_ref import ImageRefGame
 from mtcomm.games.mugeval import MCQConversationGame, TwentyQuestionsGame
 from mtcomm.games.route import RouteGame
 from mtcomm.games.sequence import SequenceGame
+from mtcomm.games.wayfind import WayfindGame
 from mtcomm.paths import DATA_ROOT, OUTPUT_ROOT
 from mtcomm.languages import get as lang_info
 from mtcomm.players import NOT_UNDERSTOOD, LLMPlayer, is_not_understood, monolingual_system
@@ -53,6 +54,7 @@ PLAYER = "gemini-3.8-flash"
 PLAYERS = {}
 PERTURB_MANIFEST = DATA_ROOT / "derived" / "perturb" / "full60" / "manifest_perturb_full60.json"
 TASKS = ["image", "mcq", "twentyq", "culture", "sequence", "sequence_step", "route"]
+EXTRA_TASKS = ["wayfind"]  # only when named in --tasks
 # (a, b): image describer=a, guesser=b; sequence narrator=a, arranger=b; route giver=a, follower=b;
 # MuG-Eval questioner=a, answerer=b.
 PAIRS = [("su", "jv"), ("jv", "su"), ("su", "ko"), ("ko", "su")]
@@ -192,7 +194,8 @@ def episodes(opts):
         easy = [it for it in items if it["map"]["level"] == "easy"]
         hard = [it for it in items if it["map"]["level"] == "hard"]
         level = opts.get("route_level", "both")  # both: half easy, half hard; easy or hard: n maps of that level
-        items = {"easy": easy[:n], "hard": hard[:n // 2]}[level] if level != "both" else easy[:(n + 1) // 2] + hard[:n // 2]
+        start = opts.get("route_start", 0)  # --route-start 15: maps not played yet, to extend an existing run
+        items = {"easy": easy[start:start + n], "hard": hard[:n // 2]}[level] if level != "both" else easy[:(n + 1) // 2] + hard[:n // 2]
         for a, b in pairs:
             for it in items:
                 for cond in all_conds(a, b):
@@ -201,6 +204,16 @@ def episodes(opts):
                                     lambda it=it, ga=ga, b=b, cond=cond: (
                                         RouteGame(it, ga, b, allow_message=cond != "prior"),
                                         ["giver", "follower"]))
+    if "wayfind" in tasks:
+        items = load_wayfind_items(langs=sorted({x for p in pairs for x in p}))
+        items = [it for it in items if opts.get("wayfind_level") in (None, it["map"]["level"])][:n]
+        for a, b in pairs:
+            for it in items:
+                for cond in all_conds(a, b):
+                    ga = b if cond == "ceiling" else a
+                    yield from emit("wayfind", f"{a}-{b}", cond, b, it["item_id"],
+                                    lambda it=it, ga=ga, b=b, cond=cond: (
+                                        WayfindGame(it, ga, b, allow_message=cond != "prior"), ["guide", "seeker"]))
     for task, Game, load in [("mcq", MCQConversationGame, load_mcq_items),
                              ("twentyq", TwentyQuestionsGame, load_twentyq_items)]:
         if task not in tasks:
@@ -461,13 +474,15 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("cmd", choices=["plan", "batch", "dialogue", "report"])
     ap.add_argument("--run", default="main")
-    ap.add_argument("--tasks", nargs="*", default=TASKS, choices=TASKS)
+    ap.add_argument("--tasks", nargs="*", default=TASKS, choices=TASKS + EXTRA_TASKS)
+    ap.add_argument("--wayfind-level", default=None, choices=["easy", "mid", "hard"], help="directions game: number of turns 2, 3 or 4")
     ap.add_argument("--pairs", nargs="*", default=None, help="e.g. su-jv ko-su (default: all four)")
     ap.add_argument("--n", type=int, default=30, help="items per task and pair")
     ap.add_argument("--workers", type=int, default=12)
     ap.add_argument("--loop", action="store_true")
     ap.add_argument("--interval", type=int, default=120)
     ap.add_argument("--route-level", default="both", choices=["both", "easy", "hard"])
+    ap.add_argument("--route-start", type=int, default=0, help="skip this many easy maps")
     ap.add_argument("--conds", nargs="*", default=None, help="only these conditions (e.g. passthrough)")
     ap.add_argument("--players", nargs="*", default=[], help="per-language models, e.g. ko=local:exaone-3.5-7.8b-instruct")
     ap.add_argument("--answer-words", action="store_true", help="give the MCQ answerer its yes/no/maybe words")
@@ -495,7 +510,7 @@ def main():
     pairs = [tuple(p.split("-")) for p in args.pairs] if args.pairs else PAIRS
     run = f"{args.run}_r{args.repeat}" if args.repeat else args.run
     opts = {"run_dir": OUTPUT_ROOT / run, "tasks": args.tasks, "pairs": pairs, "n": args.n,
-            "route_level": args.route_level}
+            "route_level": args.route_level, "route_start": args.route_start, "wayfind_level": args.wayfind_level}
     opts["run_dir"].mkdir(parents=True, exist_ok=True)
     sampling = {"temperature": args.temperature} if args.temperature is not None else {}
     backends = {m: make_backend(m, **(sampling if m.startswith("gemini") else {})) for m in {PLAYER, *PLAYERS.values()}}
@@ -509,7 +524,7 @@ def main():
     with open(opts["run_dir"] / "config.json", "w") as f:
         json.dump({"player": backend.config(), "players": {c: backends[m].config() for c, m in PLAYERS.items()},
                    "tasks": args.tasks, "pairs": pairs, "n": args.n,
-                   "route_level": args.route_level, "translators": TRANSLATORS, "pivots": PIVOTS,
+                   "route_level": args.route_level, "route_start": args.route_start, "translators": TRANSLATORS, "pivots": PIVOTS,
                    "monolingual": MONOLINGUAL, "conds": ONLY_CONDS, "sequence": SEQ, "repeat": args.repeat, "items": ITEMS},
                   f, indent=1, default=str)
     cache = ReplayCache(opts["run_dir"] / "cache.jsonl")

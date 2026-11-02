@@ -34,7 +34,9 @@ VARIANTS = {
     "seq_k4": ("sequence", 20, BOTH, ["--seq-manifest", str(BV / "manifest_seq_v3k4.json"), "--seq-words", "20", *SEQ], "4 distractors, 20 words"),
     "seq_k4w12": ("sequence", 20, ["ceiling"], ["--seq-manifest", str(BV / "manifest_seq_v3k4.json"), "--seq-words", "12", *SEQ], "4 distractors, 12 words"),
     "seq_p7": ("sequence", 20, BOTH, ["--seq-manifest", str(BV / "manifest_seq7_v1.json"), "--seq-words", "20", *SEQ], "7 pages, 20 words"),
-    "route_easy": ("route", 60, ["ceiling"], ["--route-level", "easy"], "60 easy maps"),
+    "wayfind_easy": ("wayfind", 10, BOTH, ["--wayfind-level", "easy"], "directions game, 2 turns"),
+    "wayfind_mid": ("wayfind", 10, BOTH, ["--wayfind-level", "mid"], "directions game, 3 turns"),
+    "wayfind_hard": ("wayfind", 10, BOTH, ["--wayfind-level", "hard"], "directions game, 4 turns"),
     "culture_t": ("culture", 20, BOTH, ["--culture-style", "targeted", "--culture-screen", str(DATA_ROOT / "derived" / "blend" / "culture_screen_38-flash.json")], "targeted prompt, screened items"),
 }
 
