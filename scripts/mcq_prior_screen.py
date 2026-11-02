@@ -11,6 +11,8 @@ in every language, so the passage really fills the gap.
 
 Usage: python scripts/mcq_prior_screen.py [--pool 600] [--keep 30] [--loop]
   Re-run until it prints the selection (submit, poll, ingest are resumable).
+  --player gemini-3.5-flash-lite screens for another player (data/derived/mcq/mcq_screen_35-flash-lite.json; pass it
+  to run_main.py with --mcq-screen).
 """
 
 import argparse
@@ -73,7 +75,12 @@ def main():
     ap.add_argument("--pool", type=int, default=600)
     ap.add_argument("--keep", type=int, default=30)
     ap.add_argument("--loop", action="store_true")
+    ap.add_argument("--player", default=PLAYER, help="default keeps the main runs' screen (3.8 Flash)")
     args = ap.parse_args()
+    global PLAYER, RUN_DIR, OUT
+    if args.player != PLAYER:  # another player gets its own cache and screen file
+        tag = args.player.replace("gemini-", "").replace(".", "")
+        PLAYER, RUN_DIR, OUT = args.player, RUN_DIR.parent / f"mcq_screen_{tag}", OUT.parent / f"mcq_screen_{tag}.json"
     RUN_DIR.mkdir(parents=True, exist_ok=True)
     backend = make_backend(PLAYER)
     cache = ReplayCache(RUN_DIR / "cache.jsonl")

@@ -89,7 +89,8 @@ def run(args):
     d.mkdir(parents=True, exist_ok=True)
     api = args.model.startswith(API)
     if api or args.model.startswith("taco:"):
-        be = make_backend(args.model, **({"workers": args.workers} if not api else {}))
+        kw = {"workers": args.workers} if not api else ({"temperature": args.temperature} if args.temperature is not None else {})
+        be = make_backend(args.model, **kw)
     else:
         subprocess.run([LMS, "unload", "--all"], capture_output=True)
         subprocess.run([LMS, "load", args.model, "--gpu", "max", "-c", str(args.ctx), "--parallel", str(args.workers),
@@ -99,6 +100,9 @@ def run(args):
     if args.retry_errors:
         cache.records = {k: r for k, r in cache.records.items() if "text" in r}
     Game, load = TASKS[args.task]
+    if args.task == "twentyq" and args.pool != "all":
+        base = load
+        load = lambda a, b, n, seed=0: base(a, b, n=n, seed=seed, pool=args.pool)  # noqa: E731
     # --screened: the items the main runs use (MCQ screen v2: prior wrong and passage right), instead of a random sample
     items = (lambda L: task_items(args.task, load, L, L, args.n)) if args.screened else (lambda L: load(L, L, n=args.n, seed=args.seed))
     eps = [(L, cond, it) for L in args.lang for it in items(L) for cond in ("ceiling", "prior")]
@@ -176,6 +180,8 @@ def main():
     r.add_argument("--workers", type=int, default=4)
     r.add_argument("--ctx", type=int, default=8192)
     r.add_argument("--retry-errors", action="store_true")
+    r.add_argument("--pool", default="all", choices=["all", "paper140"], help="20Q word pool (paper140 = MuG-Eval's)")
+    r.add_argument("--temperature", type=float, default=None, help="API models only; the paper used 0.7")
     r.add_argument("--screened", action="store_true", help="use the main runs' screened MCQ items, not a random sample")
     r.add_argument("--tag", default="", help="suffix for the output directory (e.g. __screened)")
     sub.add_parser("report")

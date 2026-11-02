@@ -159,24 +159,37 @@ def word_list(lang: str) -> List[str]:
     return list(_su_jv(lang))
 
 
-def load_twentyq_items(lang_q: str, lang_a: str, n: int = 30, n_candidates: int = 100, seed: int = 0) -> List[dict]:
+def _pool_indices(pool: str) -> List[int]:
+    """1-based word positions: "all" = the 199 seed words, "paper140" = the 140 MuG-Eval kept (loanwords, duplicates
+    and Latin-script words removed; data/external/mugeval/words/paper140.json)."""
+    if pool == "all":
+        return list(range(1, N_WORDS + 1))
+    if pool == "paper140":
+        keep = set(json.load(open(WORDS_DIR / "paper140.json", encoding="utf-8"))["words"])
+        return [i + 1 for i, w in enumerate(_seed()) if w in keep]
+    raise ValueError(f"unknown word pool {pool!r}")
+
+
+def load_twentyq_items(lang_q: str, lang_a: str, n: int = 30, n_candidates: int = 100, seed: int = 0,
+                       pool: str = "all") -> List[dict]:
     """Easy Twenty Questions items. Targets are the same for every language pair; the candidate list
     holds the target plus n_candidates-1 distractors, all in lang_q, shuffled per item."""
-    if not 1 <= n <= N_WORDS:
-        raise ValueError(f"n must be in 1..{N_WORDS}, got {n}")
-    if not 2 <= n_candidates <= N_WORDS:
-        raise ValueError(f"n_candidates must be in 2..{N_WORDS}, got {n_candidates}")
+    indices = _pool_indices(pool)
+    if not 1 <= n <= len(indices):
+        raise ValueError(f"n must be in 1..{len(indices)}, got {n}")
+    if not 2 <= n_candidates <= len(indices):
+        raise ValueError(f"n_candidates must be in 2..{len(indices)}, got {n_candidates}")
     words_q = word_list(lang_q)
     words_a = word_list(lang_a)
 
-    perm = list(range(1, N_WORDS + 1))
+    perm = list(indices)
     random.Random(seed).shuffle(perm)
     targets = perm[:n]
 
     items = []
     for idx in targets:
         rng = random.Random(f"{seed}-{idx}")
-        others = [j for j in range(1, N_WORDS + 1) if j != idx]
+        others = [j for j in indices if j != idx]
         cand = [idx] + rng.sample(others, n_candidates - 1)
         rng.shuffle(cand)
         items.append({

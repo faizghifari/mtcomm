@@ -265,3 +265,15 @@ def test_mcq_english_reply_is_rewritten(mcq_item):
                [Move("message", "Maybe."), Move("message", "Mungkin.")] + [Move("message", "Ya") for _ in range(3)])
     first = rec["turns"][1]
     assert first["source"] == "Mungkin." and first["rejected"][0]["text"] == "Maybe."
+
+
+def test_paper_word_pool_is_mugeval_140():
+    from mtcomm.data_mugeval import _pool_indices, load_twentyq_items, word_list
+
+    idx = _pool_indices("paper140")
+    assert len(idx) == 140
+    allowed = {word_list("ko")[i - 1] for i in idx}
+    for it in load_twentyq_items("ko", "ko", n=10, pool="paper140"):
+        assert it["target_q"] in allowed and set(it["candidates_q"]) <= allowed and len(it["candidates_q"]) == 100
+    # the default pool is unchanged, so existing runs replay
+    assert load_twentyq_items("ko", "ko", n=3)[0]["item_id"] == "tq-" + str(load_twentyq_items("ko", "ko", n=3, pool="all")[0]["idx"])
