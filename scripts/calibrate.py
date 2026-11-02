@@ -35,7 +35,7 @@ VARIANTS = {
     "seq_k4w12": ("sequence", 20, ["ceiling"], ["--seq-manifest", str(BV / "manifest_seq_v3k4.json"), "--seq-words", "12", *SEQ], "4 distractors, 12 words"),
     "seq_p7": ("sequence", 20, BOTH, ["--seq-manifest", str(BV / "manifest_seq7_v1.json"), "--seq-words", "20", *SEQ], "7 pages, 20 words"),
     "route_easy": ("route", 60, ["ceiling"], ["--route-level", "easy"], "60 easy maps"),
-    "culture_t": ("culture", 20, BOTH, ["--culture-style", "targeted", "--culture-screen", str(DATA_ROOT / "derived" / "blend" / "culture_screen_gemini-3.8-flash.json")], "targeted prompt, screened items"),
+    "culture_t": ("culture", 20, BOTH, ["--culture-style", "targeted", "--culture-screen", str(DATA_ROOT / "derived" / "blend" / "culture_screen_38-flash.json")], "targeted prompt, screened items"),
 }
 
 

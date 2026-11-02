@@ -140,6 +140,8 @@ def task_items(task, load, a, b, n):
     if task == "twentyq":
         return load(a, b, n=n, pool=ITEMS["twentyq_pool"])
     path = ITEMS["mcq_screen"] or MCQ_SCREEN
+    if ITEMS["mcq_screen"] not in (None, "random") and not Path(path).exists():
+        raise SystemExit(f"--mcq-screen file not found: {path}")  # never fall back to unscreened items silently
     if task != "mcq" or path == "random" or not Path(path).exists():
         return load(a, b, n=n)
     screen = json.load(open(path))

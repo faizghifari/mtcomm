@@ -73,6 +73,7 @@ def passage_answers(item_ids, pool, backend, cache, pending):
 
 
 def main():
+    global PLAYER, RUN_DIR, OUT
     ap = argparse.ArgumentParser()
     ap.add_argument("--pool", type=int, default=600)
     ap.add_argument("--keep", type=int, default=30)
@@ -81,7 +82,6 @@ def main():
     ap.add_argument("--wrong-langs", type=int, default=3, help="languages (of 3) the prior must get wrong")
     ap.add_argument("--out-name", default=None, help="write this file instead of the default screen")
     args = ap.parse_args()
-    global PLAYER, RUN_DIR, OUT
     if args.player != PLAYER:  # another player gets its own cache and screen file
         tag = args.player.replace("gemini-", "").replace(".", "")
         PLAYER, RUN_DIR, OUT = args.player, RUN_DIR.parent / f"mcq_screen_{tag}", OUT.parent / f"mcq_screen_{tag}.json"
