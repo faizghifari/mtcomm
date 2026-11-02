@@ -25,6 +25,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from mtcomm.paths import DATA_ROOT, OUTPUT_ROOT
+from mtcomm.players import is_not_understood
 
 HERE = Path(__file__).resolve().parent
 TASKS = ["mcq", "twentyq", "sequence", "image", "route", "culture"]
@@ -37,8 +38,11 @@ REFERENCE = {"3.1 Flash-Lite": {"mcq": "main2x_mcq", "twentyq": "main2x_twentyq"
              "3.8 Flash": {"mcq": "main2r_flash_mcq", "sequence": "main2x_sequence", "image": "main2xf_image", "route": "main2x_route"}}
 
 
+TAG = ""  # --tag v2: a separate run of the same screen
+
+
 def run_name(player, task):
-    return f"screen_{player.replace('gemini-', '').replace('.', '')}_{task}"
+    return f"screen_{player.replace('gemini-', '').replace('.', '')}{TAG}_{task}"
 
 
 def run_task(player, task, n):
@@ -97,9 +101,10 @@ def verdict(task, ceil, prior):
 def report(args):
     md = [f"# Player screen: {args.player}\n",
           "Ceiling and prior per task, main2's settings, n per receiving language. Paired = same items in an existing run: "
-          "difference in points, games better / worse, exact McNemar p.\n",
-          "| task | ceiling | per language | prior | verdict | vs 3.1 Flash-Lite | vs 3.8 Flash | passthrough su↔ko | passthrough su↔jv | $/game |",
-          "|---|---|---|---|---|---|---|---|---|---|"]
+          "difference in points, games better / worse, exact McNemar p. Opening refusals: games where the first message is the "
+          "refusal sentence (with the rewrite rule they are rejected first, and remain only if the rewrites fail too).\n",
+          "| task | ceiling | per language | prior | verdict | vs 3.1 Flash-Lite | vs 3.8 Flash | passthrough su↔ko | passthrough su↔jv | opening refusals | $/game |",
+          "|---|---|---|---|---|---|---|---|---|---|---|"]
     for task in TASKS:
         run = run_name(args.player, task)
         d = outcomes(run)
@@ -124,20 +129,30 @@ def report(args):
         for k, v in d.items():
             if k[1] == "passthrough":
                 pt["ko" if "ko" in k[0] else "jv"].append(v)
+        opening, ceiling_games = 0, 0
+        rp = OUTPUT_ROOT / run / "records.jsonl"
+        if rp.exists():
+            for line in open(rp):
+                r = json.loads(line)
+                if r["status"] == "done" and r["cond"] == "ceiling" and r["turns"]:
+                    ceiling_games += 1
+                    opening += is_not_understood(r["turns"][0]["source"], r["eval_lang"])
         spend = "–"
         sp = OUTPUT_ROOT / run / "summary.json"
         if sp.exists() and d:
             spend = f"{json.load(open(sp))['spend_total_usd'] / len(d):.4f}"
         md.append(f"| {task} | {fmt(ceil)} | {per} | {fmt(prior)} | {verdict(task, ceil[0], prior[0])} | {refs[0]} | {refs[1]} | "
-                  f"{fmt(rate(pt['ko']))} | {fmt(rate(pt['jv']))} | {spend} |")
-    out = OUTPUT_ROOT / f"screen_{args.player.replace('gemini-', '').replace('.', '')}.md"
+                  f"{fmt(rate(pt['ko']))} | {fmt(rate(pt['jv']))} | {opening}/{ceiling_games} | {spend} |")
+    out = OUTPUT_ROOT / f"screen_{args.player.replace('gemini-', '').replace('.', '')}{TAG}.md"
     out.write_text("\n".join(md) + "\n")
     print("\n".join(md))
     print(f"\nwrote {out}")
 
 
 def main():
+    global TAG
     ap = argparse.ArgumentParser()
+    ap.add_argument("--tag", default="", help="suffix for run names, e.g. v2")
     sub = ap.add_subparsers(dest="cmd", required=True)
     r = sub.add_parser("run")
     r.add_argument("--player", required=True)
@@ -146,6 +161,7 @@ def main():
     q = sub.add_parser("report")
     q.add_argument("--player", required=True)
     args = ap.parse_args()
+    TAG = f"_{args.tag}" if args.tag else ""
     if args.cmd == "report":
         return report(args)
     with ThreadPoolExecutor(len(args.tasks)) as ex:
