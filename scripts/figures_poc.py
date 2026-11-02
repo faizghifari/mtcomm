@@ -138,7 +138,7 @@ def fig2(cells):
         ax.set_xlabel("success %")
     fig.suptitle("Task success per language pair. Dashed line = ceiling of the scored language.",
                  x=0.01, ha="left", fontsize=11, fontweight="bold", y=0.998)
-    fig.text(0.01, 0.976, "n=30 games per dot, 20–22 on culture (95% interval about ±17 points). a → b: a sends, b is scored. a asks b: a is scored, b holds the information. Orange: NLLB and Google via Indonesian.",
+    fig.text(0.01, 0.976, "n=30 games per dot (95% interval about ±17 points); culture 11–20 (up to ±28). a → b: a sends, b is scored. a asks b: a is scored, b holds the information. Orange: NLLB and Google via Indonesian.",
              fontsize=8.5, color=INK2, ha="left")
     fig.tight_layout(rect=(0, 0, 1, 0.968), h_pad=2.2)
     fig.savefig(FIG / "fig2_per_pair.png", dpi=160)
