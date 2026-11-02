@@ -6,7 +6,8 @@ communication. Each story gets `--samples` prior attempts (the request is langua
 the kept stories are never put exactly in order and have the lowest mean Kendall's tau.
 
 Usage: python scripts/sequence_prior_screen.py [--pool manifest_seq_pool120.json] [--keep 30] [--loop]
-  Writes data/derived/bloom_vist/manifest_seq_v2.json (the selected stories, in rank order).
+  Writes data/derived/bloom_vist/manifest_seq_v2.json (the selected stories, in rank order), or --out-name.
+  --tag gives the screen its own cache, for a pool whose story ids overlap an earlier one.
 """
 
 import argparse
@@ -45,7 +46,12 @@ def main():
     ap.add_argument("--samples", type=int, default=3)
     ap.add_argument("--keep", type=int, default=30)
     ap.add_argument("--loop", action="store_true")
+    ap.add_argument("--tag", default="")
+    ap.add_argument("--out-name", default="manifest_seq_v2.json")
     args = ap.parse_args()
+    global RUN_DIR
+    if args.tag:
+        RUN_DIR = RUN_DIR.parent / f"{RUN_DIR.name}_{args.tag}"
     RUN_DIR.mkdir(parents=True, exist_ok=True)
     backend = make_backend(PLAYER)
     cache = ReplayCache(RUN_DIR / "cache.jsonl")
@@ -96,7 +102,7 @@ def main():
                                         "mean_tau_pool": round(sum(map(mean_tau, scores)) / len(scores), 3),
                                         "mean_tau_kept": round(sum(map(mean_tau, keep)) / max(1, len(keep)), 3)},
                stories=[dict(by_id[sid], prior_mean_tau=round(mean_tau(sid), 3)) for sid in keep])
-    json.dump(out, open(SEQ_DIR / "manifest_seq_v2.json", "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+    json.dump(out, open(SEQ_DIR / args.out_name, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
     print(f"pool {len(scores)}: {len(exact)} put exactly in order by the prior at least once; mean tau "
           f"{out['screen']['mean_tau_pool']} (kept: {out['screen']['mean_tau_kept']}); kept {len(keep)}")
 

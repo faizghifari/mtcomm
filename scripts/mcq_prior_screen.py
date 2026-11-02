@@ -13,6 +13,8 @@ Usage: python scripts/mcq_prior_screen.py [--pool 600] [--keep 30] [--loop]
   Re-run until it prints the selection (submit, poll, ingest are resumable).
   --player gemini-3.5-flash-lite screens for another player (data/derived/mcq/mcq_screen_35-flash-lite.json; pass it
   to run_main.py with --mcq-screen).
+  --out-name mcq_screen_x.json writes a new list and never touches v2: v2's items come first, so runs on the new list
+  still pair with the existing ones. --wrong-langs 2 keeps items the prior gets wrong in exactly 2 of the 3 languages.
 """
 
 import argparse
@@ -76,6 +78,8 @@ def main():
     ap.add_argument("--keep", type=int, default=30)
     ap.add_argument("--loop", action="store_true")
     ap.add_argument("--player", default=PLAYER, help="default keeps the main runs' screen (3.8 Flash)")
+    ap.add_argument("--wrong-langs", type=int, default=3, help="languages (of 3) the prior must get wrong")
+    ap.add_argument("--out-name", default=None, help="write this file instead of the default screen")
     args = ap.parse_args()
     global PLAYER, RUN_DIR, OUT
     if args.player != PLAYER:  # another player gets its own cache and screen file
@@ -106,7 +110,7 @@ def main():
             json.dump(state, open(state_p, "w"))
         pending = {}
         answers = prior_answers(args.pool, backend, cache, pending)
-        wrong = {i for i, a in answers.items() if all(v is False for v in a.values())}
+        wrong = {i for i, a in answers.items() if sum(v is False for v in a.values()) == args.wrong_langs}
         readable = passage_answers(wrong, args.pool, backend, cache, pending) if not pending else {}
         if pending:
             state["job"] = backend.submit([(k, v["request"]) for k, v in pending.items()], RUN_DIR)
@@ -119,10 +123,14 @@ def main():
         break
     acc = {la: sum(a[la] for a in answers.values()) / len(answers) for la in LANGS}
     ok = [i for i in answers if i in wrong and all(readable.get(i, {}).get(la) for la in LANGS)]
+    if args.out_name:
+        first = json.load(open(OUT))["item_ids"] if OUT.exists() else []
+        ok = [i for i in first if i in ok] + [i for i in ok if i not in first]
+        OUT = OUT.parent / args.out_name
     keep = ok[:args.keep]
     OUT.parent.mkdir(parents=True, exist_ok=True)
     json.dump({"version": 2, "player": PLAYER, "pool": args.pool, "prior_accuracy_on_pool": acc,
-               "n_wrong_all_langs": len(wrong), "n_wrong_and_passage_right": len(ok),
+               "wrong_langs": args.wrong_langs, "n_wrong_all_langs": len(wrong), "n_wrong_and_passage_right": len(ok),
                "passage_accuracy_on_wrong": {la: sum(bool(readable[i][la]) for i in wrong) / max(1, len(wrong))
                                              for la in LANGS},
                "item_ids": keep, "prior": {i: answers[i] for i in keep}}, open(OUT, "w"), indent=1)

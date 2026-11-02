@@ -277,3 +277,13 @@ def test_paper_word_pool_is_mugeval_140():
         assert it["target_q"] in allowed and set(it["candidates_q"]) <= allowed and len(it["candidates_q"]) == 100
     # the default pool is unchanged, so existing runs replay
     assert load_twentyq_items("ko", "ko", n=3)[0]["item_id"] == "tq-" + str(load_twentyq_items("ko", "ko", n=3, pool="all")[0]["idx"])
+
+
+def test_mcq_question_budget_is_a_knob_and_the_default_prompt_is_unchanged(mcq_item):
+    from mtcomm.games.mugeval import MCQConversationGame
+    default = MCQConversationGame(mcq_item, "en", "id").observe("questioner").instructions
+    assert "exactly 4 questions (one corresponding to each answer choice)" in default
+    assert "After receiving all four responses, provide your final answer" in default
+    more = MCQConversationGame(mcq_item, "en", "id", max_questions=8)
+    assert "exactly 8 questions" in more.observe("questioner").instructions
+    assert more.max_questions == 8 and MCQConversationGame.max_questions == 4

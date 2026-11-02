@@ -47,9 +47,11 @@ class _QAGame(GameMaster):
     max_questions = 20
 
     def __init__(self, item: dict, questioner_lang: str, answerer_lang: str, allow_message: bool = True,
-                 given_words: bool = False, original: bool = False):
+                 given_words: bool = False, original: bool = False, max_questions: int = None):
         super().__init__(item, {"questioner": questioner_lang, "answerer": answerer_lang})
         self.allow_message = allow_message
+        if max_questions is not None:  # a difficulty knob; None keeps the task's default and its prompt
+            self.max_questions = max_questions
         self.words = ANSWER_WORDS.get(answerer_lang) if given_words else None
         # original=True: MuG-Eval's released MCQ prompts verbatim (the answerer replies "Yes."/"No."/"Maybe." in
         # English), for screening whether a model can play the task at all in its own language (no translation).
@@ -153,6 +155,13 @@ class TwentyQuestionsGame(_QAGame):
 class MCQConversationGame(_QAGame):
     max_questions = 4  # MuG-Eval's released prompt: exactly 4 questions, one per choice
 
+    def _question_rule(self):
+        if self.max_questions == 4:  # MuG-Eval's wording, unchanged so that existing runs replay
+            return ("You must ask exactly 4 questions (one corresponding to each answer choice) before making your "
+                    "final decision. After receiving all four responses,")
+        return (f"You must ask exactly {self.max_questions} questions about the answer choices before making your "
+                "final decision. After receiving all the responses,")
+
     def observe(self, role):
         if role == "answerer" and self.original:  # mcqa_prompt_chat_eng_a.md
             q = self.inbox[role][-1] if self.inbox[role] else ""
@@ -188,9 +197,7 @@ class MCQConversationGame(_QAGame):
         intro = (f"You will be solving a multiple-choice question by asking questions about a hidden passage. "
                  f"{person}\n\nYour questions must be in {name} and you can only ask one "
                  f"question at a time. Do not ask for hints or request the passage directly. Among the four answer "
-                 f"choices provided, exactly one is correct. You must ask exactly {self.max_questions} questions (one "
-                 f"corresponding to each answer choice) before making your final decision. After receiving all four "
-                 f"responses, provide your final answer in {name}, indicating the correct number choice with double "
+                 f"choices provided, exactly one is correct. {self._question_rule()} provide your final answer in {name}, indicating the correct number choice with double "
                  f"brackets: [[X]]\n\n<|Query|>\n{self.item['question_q']}\n\n<|Choices|>\n{choices}\n\n"
                  f"<|Language|>\n{name}")
         final = (f"You have now used all available questions. Based on the responses you've received, please provide "
