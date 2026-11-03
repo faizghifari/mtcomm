@@ -4,8 +4,9 @@ alone: each addition gets its own run directory, and scripts/merge_runs.py combi
   pivots   NLLB and Google through Indonesian on su<->ko -> main3p_<task>
   qwen     Qwen on the tasks that ran while taco was down -> main3q_<task>
   repeat   a whole task again with fresh sampling -> main4_<task>_r<k>
+  nllb     NLLB and NLLB via Indonesian again, after the input fix (NLLBChannel) -> main3n_<task>, and main4n_<task>_r<k> with --k
 
-pivots and qwen copy the parents' cache, so the opening messages are the ones the parents' conditions used and the comparison stays
+pivots, qwen and nllb copy the parents' cache, so the opening messages are the ones the parents' conditions used and the comparison stays
 paired. A repeat has its own cache, so nothing is replayed. It runs every condition but passthrough. Flags come from the parent's
 config.json, so a cell cannot drift from the run it extends.
 
@@ -95,11 +96,26 @@ def repeat(task, k, workers):
     return play(f"main4_{task}_r{k}", ["--run", f"main4_{task}", "--repeat", str(k), "--tasks", task, *PLAYER, "--pivots-all", "--conds", *REPEAT_CONDS, *flags], workers)
 
 
+def nllb(task, workers):
+    name, parents = f"main3n_{task}", PIVOT_PARENTS[task]
+    seed(name, parents)
+    flags = ["--n", "30", "--route-level", "easy"] if task == "route" else parent_flags(parents[0])
+    return play(name, ["--run", name, "--tasks", task, *PLAYER, "--conds", "nllb", "nllb-id", "--pivots-all", *flags], workers)
+
+
+def nllb_repeat(task, k, workers):
+    """A repeat played before the fix: same cache, so its opening messages and the other conditions stay paired."""
+    name, parent = f"main4n_{task}_r{k}", f"main4_{task}_r{k}"
+    seed(name, [parent])
+    flags = ["--n", "30", "--route-level", "easy"] if task == "route" else parent_flags(PIVOT_PARENTS[task][0])
+    return play(name, ["--run", name, "--tasks", task, *PLAYER, "--conds", "nllb", "nllb-id", "--pivots-all", *flags], workers)
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=["pivots", "qwen", "repeat"])
+    ap.add_argument("cmd", choices=["pivots", "qwen", "repeat", "nllb"])
     ap.add_argument("--only", nargs="*", default=None, choices=list(PIVOT_PARENTS))
-    ap.add_argument("--k", nargs="*", type=int, default=[1, 2], help="repeat numbers")
+    ap.add_argument("--k", nargs="*", type=int, default=None, help="repeat numbers (repeat: default 1 2; nllb: none means the main run)")
     ap.add_argument("--workers", type=int, default=8)
     args = ap.parse_args()
     tasks = args.only or list(QWEN_PARENTS if args.cmd == "qwen" else PIVOT_PARENTS)
@@ -108,8 +124,11 @@ def main():
             print(pivots(task, args.workers), flush=True)
         elif args.cmd == "qwen":
             print(qwen(task, args.workers), flush=True)
+        elif args.cmd == "nllb":
+            for k in args.k or [None]:
+                print(nllb_repeat(task, k, args.workers) if k else nllb(task, args.workers), flush=True)
         else:
-            for k in args.k:
+            for k in args.k or [1, 2]:
                 print(repeat(task, k, args.workers), flush=True)
 
 

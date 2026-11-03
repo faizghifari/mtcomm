@@ -653,7 +653,7 @@ def test_nllb_server_round_trip():
         name = "fake"
 
         def translate(self, text, src, tgt, history=None):
-            return ChannelOutput(f"{text}>{tgt}", {"channel": "nllb:nllb-200-3.3B"})
+            return ChannelOutput(f"{text}>{tgt}", {"channel": "nllb:nllb-200-3.3B/v2"})
 
     srv = server_mod.make_server(Fake(), "facebook/nllb-200-3.3B", 0)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
@@ -661,13 +661,38 @@ def test_nllb_server_round_trip():
     try:
         os.environ["NLLB_URL"] = url
         ch = nllb_channel()
-        assert isinstance(ch, NLLBRemote) and ch.name == "nllb:nllb-200-3.3B"  # same cache keys as a local copy
+        assert isinstance(ch, NLLBRemote) and ch.name == "nllb:nllb-200-3.3B/v2"  # same cache keys as a local copy
         out = ch.translate("halo", "su", "jv")
-        assert out.text == "halo>jv" and out.meta["channel"] == "nllb:nllb-200-3.3B"
+        assert out.text == "halo>jv" and out.meta["channel"] == "nllb:nllb-200-3.3B/v2"
         # a server that is down at start is left out; one that goes down later is skipped
         os.environ["NLLB_URL"] = f"http://127.0.0.1:9,{url}"
         assert nllb_channel().urls == [url]
         assert NLLBRemote(["http://127.0.0.1:9", url]).translate("halo", "su", "jv").text == "halo>jv"
+        # servers named but none up: stop rather than load a copy here
+        os.environ["NLLB_URL"] = "http://127.0.0.1:9"
+        with pytest.raises(RuntimeError):
+            nllb_channel()
     finally:
         del os.environ["NLLB_URL"]
         srv.shutdown()
+
+
+def test_nllb_input_has_one_language_tag():
+    """A tokenizer that adds its own language tag (transformers 5.21 adds eng_Latn) must not reach the model."""
+    from mtcomm.channels import NLLBChannel
+
+    class Tok:
+        eos_token_id = 2
+
+        def __call__(self, text, add_special_tokens=True, truncation=True, max_length=None):
+            class Out:
+                input_ids = ([256047] if add_special_tokens else []) + [7, 8, 9] + ([2] if add_special_tokens else [])
+            return Out
+
+        def convert_tokens_to_ids(self, tag):
+            return {"sun_Latn": 256166, "eng_Latn": 256047}[tag]
+
+    ch = NLLBChannel()
+    ch._tok = Tok()
+    assert ch.input_ids("x", "sun_Latn") == [256166, 7, 8, 9, 2]
+    assert ch.name == "nllb:nllb-200-3.3B/v2" and "v2" in PivotChannel(ch, "id").name  # old caches cannot replay

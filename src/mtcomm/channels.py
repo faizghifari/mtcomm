@@ -58,13 +58,14 @@ class NoChannel(Channel):
 
 
 class NLLBChannel(Channel):
-    """NLLB-200, loaded lazily in fp16. Prepends the FLORES source token manually because
-    transformers 5.x no longer does it via tok.src_lang (same fix as mt-eval's local_nmt)."""
+    """NLLB-200, loaded lazily in fp16. The input ids are written out as [source tag, text, </s>], the standard NLLB input, because
+    tokenizer defaults differ between transformers versions: under 5.21 the tokenizer adds eng_Latn by itself, and the first version
+    of this class put the source tag in front of that. Those translations are cached under the old name, so this one has its own."""
 
     def __init__(self, model_name="facebook/nllb-200-3.3B", device="cuda", num_beams=4, max_new_tokens=512):
         self.model_name, self.device = model_name, device
         self.num_beams, self.max_new_tokens = num_beams, max_new_tokens
-        self.name = f"nllb:{model_name.split('/')[-1]}"
+        self.name = f"nllb:{model_name.split('/')[-1]}/v2"
         self._tok = self._model = None
         self._lock = threading.Lock()  # one GPU model shared by episode threads
 
@@ -86,13 +87,16 @@ class NLLBChannel(Channel):
         with self._lock:
             return self._translate(text, src, tgt)
 
+    def input_ids(self, text, src_tag):
+        body = self._tok(text, add_special_tokens=False, truncation=True, max_length=1022).input_ids
+        return [self._tok.convert_tokens_to_ids(src_tag), *body, self._tok.eos_token_id]
+
     def _translate(self, text, src, tgt):
         self._load()
         import torch
 
         s, t = languages.get(src).nllb, languages.get(tgt).nllb
-        enc = self._tok(text, return_tensors="pt", truncation=True, max_length=1024)
-        ids = torch.cat([torch.tensor([[self._tok.convert_tokens_to_ids(s)]]), enc.input_ids], dim=1).to(self.device)
+        ids = torch.tensor([self.input_ids(text, s)]).to(self.device)
         with torch.no_grad():
             gen = self._model.generate(input_ids=ids, attention_mask=torch.ones_like(ids),
                                        forced_bos_token_id=self._tok.convert_tokens_to_ids(t),
@@ -128,17 +132,23 @@ class NLLBRemote(NLLBChannel):
 
 
 def nllb_channel(model_name="facebook/nllb-200-3.3B"):
-    """The shared servers that are up (NLLB_URL, comma-separated; default localhost:10090), otherwise a copy loaded in this process."""
+    """The shared servers that are up (NLLB_URL, comma-separated), otherwise a copy loaded in this process. With NLLB_URL set and no server
+    up it stops: a run would otherwise load its own copy, and output can differ slightly between hardware and library versions."""
     import requests
 
+    urls = os.environ.get("NLLB_URL")
     up = []
-    for url in os.environ.get("NLLB_URL", "http://127.0.0.1:10090").split(","):
+    for url in (urls or "http://127.0.0.1:10090").split(","):
         try:
             if requests.get(f"{url}/health", timeout=5).json().get("model") == model_name:
                 up.append(url)
         except (requests.RequestException, ValueError):
             pass
-    return NLLBRemote(up, model_name) if up else NLLBChannel(model_name)
+    if up:
+        return NLLBRemote(up, model_name)
+    if urls:
+        raise RuntimeError(f"no NLLB server up at {urls}")
+    return NLLBChannel(model_name)
 
 
 class GoogleChannel(Channel):

@@ -1,6 +1,6 @@
 """How much do results move when a whole task is played again? -> analysis_poc3/consistency.md
 
-Compares the merged run (poc3_<task>, "r0") with fresh repeats (main4_<task>_r<k>, scripts/run_cells.py), which have their own cache and
+Compares the merged run (poc3_<task>, "r0") with fresh repeats (rep_<task>_r<k>, from scripts/run_cells.py and scripts/merge_runs.py), which have their own cache and
 so their own opening messages. On NLLB and Google only the players vary between runs, since the translators are deterministic; on Sol
 and Flash-Lite the translator varies too. Qwen runs at temperature 0.
 
@@ -88,8 +88,8 @@ def se_design(item, resid, n_items, repeats):
 def section(task):
     runs = [(f"r0", f"poc3_{task}")]
     k = 1
-    while (OUTPUT_ROOT / f"main4_{task}_r{k}" / "records.jsonl").exists():
-        runs.append((f"r{k}", f"main4_{task}_r{k}"))
+    while (OUTPUT_ROOT / f"rep_{task}_r{k}" / "records.jsonl").exists():
+        runs.append((f"r{k}", f"rep_{task}_r{k}"))
         k += 1
     if len(runs) < 2:
         return []
