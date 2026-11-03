@@ -150,7 +150,7 @@ def fig2(cells):
         ax.set_xlabel("success %")
     fig.suptitle("Task success per language pair. Dashed line = ceiling of the scored language.",
                  x=0.01, ha="left", fontsize=11, fontweight="bold", y=0.998)
-    fig.text(0.01, 0.985, "Three runs: n=90 games per dot (95% interval about ±10 points); culture 33–60 (up to ±17); passthrough first run only.\na → b: a sends, b is scored. a asks b: a is scored, b holds the information. Orange: NLLB and Google via Indonesian.",
+    fig.text(0.01, 0.985, "Three runs: n=90 games per dot (95% interval ±5–17 points, resampling items); culture 33–60 (up to ±24); passthrough first run only.\na → b: a sends, b is scored. a asks b: a is scored, b holds the information. Orange: NLLB and Google via Indonesian.",
              fontsize=8.5, color=INK2, ha="left", va="top")
     fig.tight_layout(rect=(0, 0, 1, 0.962), h_pad=2.2)
     fig.savefig(FIG / "fig2_per_pair.png", dpi=160)

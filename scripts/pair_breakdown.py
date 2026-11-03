@@ -17,7 +17,7 @@ HEAD = {"ceiling": "ceiling", "sol": "Sol", "flash-lite": "Flash-Lite", "google"
 
 def main():
     md = ["# Per-pair results (player: 3.8 Flash)\n",
-          "Success %, pooled over the first run and its two repeats: n=90 games per cell (95% interval about ±10 points), culture 33–60 (up to ±17), passthrough 30 (first run only, about ±17). "
+          "Success %, pooled over the first run and its two repeats: n=90 games per cell (30 items, 3 runs; 95% interval ±5–17 points, resampling items), culture 33–60 (up to ±24), passthrough 30 (first run only). "
           "Sequence, image and route: `a-b` means a sends and b, the receiver, is scored. MCQ and Twenty Questions: a asks and is scored, b holds the information, and both directions "
           "are translated. Ceiling and prior belong to the scored language.\n"]
     for title, run, task in available():
