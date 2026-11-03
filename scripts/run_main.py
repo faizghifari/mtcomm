@@ -34,7 +34,7 @@ from pathlib import Path
 
 from mtcomm import lid
 from mtcomm.backends import make_backend
-from mtcomm.channels import GoogleWebChannel, IdentityChannel, NLLBChannel, NoChannel, PivotChannel, llm_translator
+from mtcomm.channels import GoogleWebChannel, IdentityChannel, NoChannel, PivotChannel, llm_translator, nllb_channel
 from mtcomm.data import load_blend_items, load_image_items, load_route_items, load_sequence_items, load_wayfind_items
 from mtcomm.data_mugeval import load_mcq_items, load_twentyq_items
 from mtcomm.game import run_episode
@@ -89,7 +89,7 @@ class Channels:
             if cond in TRANSLATOR_MODELS:
                 ch = llm_translator(TRANSLATOR_MODELS[cond])
             elif cond == "nllb":
-                ch = NLLBChannel("facebook/nllb-200-3.3B")
+                ch = nllb_channel("facebook/nllb-200-3.3B")
             elif cond == "google":
                 ch = GoogleWebChannel()
             elif cond in PIVOTS:

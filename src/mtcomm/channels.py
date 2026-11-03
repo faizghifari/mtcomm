@@ -14,6 +14,7 @@ Channels are stateless per message by default; `history` is passed so that histo
 translators can be tested as an ablation.
 """
 
+import itertools
 import os
 import threading
 import time
@@ -98,6 +99,46 @@ class NLLBChannel(Channel):
                                        max_new_tokens=self.max_new_tokens, num_beams=self.num_beams)
         return ChannelOutput(self._tok.batch_decode(gen, skip_special_tokens=True)[0].strip(),
                              {"channel": self.name, "src_code": s, "tgt_code": t})
+
+
+class NLLBRemote(NLLBChannel):
+    """NLLB through scripts/nllb_server.py: one copy of the weights per GPU, shared by every run. Requests alternate over the servers and
+    move to the next if one fails. Same name as a local copy, so caches are interchangeable."""
+
+    def __init__(self, urls, model_name="facebook/nllb-200-3.3B"):
+        super().__init__(model_name)
+        self.urls = [u.rstrip("/") for u in ([urls] if isinstance(urls, str) else urls)]
+        self._next = itertools.count()
+
+    def translate(self, text, src, tgt, history=None):
+        import requests
+
+        if not self.supports(src, tgt):
+            raise ValueError(f"{self.name}: unsupported pair {src}->{tgt}")
+        start, last = next(self._next), None
+        for k in range(len(self.urls)):
+            try:
+                r = requests.post(f"{self.urls[(start + k) % len(self.urls)]}/translate", json={"text": text, "src": src, "tgt": tgt}, timeout=900)
+                r.raise_for_status()
+                d = r.json()
+                return ChannelOutput(d["text"], d["meta"])
+            except requests.RequestException as e:
+                last = e
+        raise last
+
+
+def nllb_channel(model_name="facebook/nllb-200-3.3B"):
+    """The shared servers that are up (NLLB_URL, comma-separated; default localhost:10090), otherwise a copy loaded in this process."""
+    import requests
+
+    up = []
+    for url in os.environ.get("NLLB_URL", "http://127.0.0.1:10090").split(","):
+        try:
+            if requests.get(f"{url}/health", timeout=5).json().get("model") == model_name:
+                up.append(url)
+        except (requests.RequestException, ValueError):
+            pass
+    return NLLBRemote(up, model_name) if up else NLLBChannel(model_name)
 
 
 class GoogleChannel(Channel):

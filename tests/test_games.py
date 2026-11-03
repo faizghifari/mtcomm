@@ -3,6 +3,7 @@
 No network, no GPU: every player is scripted and every channel is local.
 """
 
+import os
 import sys
 from pathlib import Path
 
@@ -639,3 +640,34 @@ def test_repeat_consistency_statistics():
     # more repeats shrink only the residual part
     assert rc.se_design(0.1, 0.1, 100, 3) < rc.se_design(0.1, 0.1, 100, 1)
     assert rc.se_design(0.1, 0.0, 100, 3) == rc.se_design(0.1, 0.0, 100, 1)
+
+
+def test_nllb_server_round_trip():
+    import threading
+
+    from mtcomm.channels import NLLBRemote, nllb_channel
+
+    server_mod = _load_script("nllb_server")
+
+    class Fake(Channel):
+        name = "fake"
+
+        def translate(self, text, src, tgt, history=None):
+            return ChannelOutput(f"{text}>{tgt}", {"channel": "nllb:nllb-200-3.3B"})
+
+    srv = server_mod.make_server(Fake(), "facebook/nllb-200-3.3B", 0)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    url = f"http://127.0.0.1:{srv.server_address[1]}"
+    try:
+        os.environ["NLLB_URL"] = url
+        ch = nllb_channel()
+        assert isinstance(ch, NLLBRemote) and ch.name == "nllb:nllb-200-3.3B"  # same cache keys as a local copy
+        out = ch.translate("halo", "su", "jv")
+        assert out.text == "halo>jv" and out.meta["channel"] == "nllb:nllb-200-3.3B"
+        # a server that is down at start is left out; one that goes down later is skipped
+        os.environ["NLLB_URL"] = f"http://127.0.0.1:9,{url}"
+        assert nllb_channel().urls == [url]
+        assert NLLBRemote(["http://127.0.0.1:9", url]).translate("halo", "su", "jv").text == "halo>jv"
+    finally:
+        del os.environ["NLLB_URL"]
+        srv.shutdown()
