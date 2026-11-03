@@ -4,8 +4,9 @@ fig1_pooled.png          success per condition, pooled over the 4 pairs, with Wi
 fig2_per_pair.png        the same per language pair (rows = tasks, columns = pairs); dashed line = ceiling
 fig3_metrics.png         MT metrics vs task success: per-game AUC (bootstrap interval) and per-condition Spearman
 fig4_sequence_scatter.png  condition success vs mean metric on sequence, the one task whose conditions can be ranked
+fig5_repeats.png         success per condition in each run of a task
 
-Reads cells.json in the analysis directory (run scripts/analyze_main2.py first) and outputs/mtcomm/metrics3/*. Writes outputs/mtcomm/figures/*.png. Needs matplotlib, numpy and scipy.
+Reads cells.json in the analysis directory (run scripts/analyze_main2.py first) and outputs/mtcomm/metrics4/*. Writes outputs/mtcomm/figures/*.png. Needs matplotlib, numpy and scipy.
 
 Colours: the first three slots of the validated categorical palette (blue, orange, aqua; all-pairs CVD safe) and
 neutral greys. Orange is used only for the Indonesian pivots in figures 1-2 and for the second metric in figures 3-4.
@@ -26,7 +27,7 @@ from mtcomm.paths import OUTPUT_ROOT
 from mtcomm.poc_runs import ANALYSIS as D
 from mtcomm.poc_runs import available
 
-M = OUTPUT_ROOT / "metrics3"
+M = OUTPUT_ROOT / "metrics4"
 FIG = OUTPUT_ROOT / "figures"
 BLUE, ORANGE, AQUA = "#2a78d6", "#eb6834", "#1baf7a"
 INK, INK2, GRID, REF, REF_LIGHT = "#0b0b0b", "#52514e", "#e3e2de", "#52514e", "#a9a8a3"
@@ -260,10 +261,48 @@ def fig4(cells):
     plt.close(fig)
 
 
+def fig5(cells):
+    """Success per condition in each run of a task: r0 (the headline run) and the repeats. Tasks without repeats are left out."""
+    conds = [(c, n) for c, n in ROWS if c not in ("passthrough", "prior")]
+    tasks = []
+    for title, run, task in TASKS:
+        reps = sorted(p.parent.name for p in OUTPUT_ROOT.glob(f"rep_{task}_r*/records.jsonl"))
+        if reps:
+            tasks.append((title, [run, *reps]))
+    if not tasks:
+        return
+    marks = [("o", INK, "First run"), ("s", BLUE, "Repeat 1"), ("^", ORANGE, "Repeat 2")]
+    rows = math.ceil(len(tasks) / 2)
+    fig, axes = plt.subplots(rows, 2, figsize=(11, 2.75 * rows + 1), squeeze=False)
+    for ax in axes.flat[len(tasks):]:
+        ax.axis("off")
+    for ax, (title, runs) in zip(axes.flat, tasks):
+        style(ax)
+        y = np.arange(len(conds))[::-1]
+        for yy, (c, _) in zip(y, conds):
+            vals = []
+            for k, run in enumerate(runs):
+                got = [bool(json.loads(line)["score"].get("correct")) for line in open(OUTPUT_ROOT / run / "records.jsonl") if f'"cond": "{c}"' in line and '"status": "done"' in line]
+                if got:
+                    vals.append(100 * sum(got) / len(got))
+                    ax.plot(vals[-1], yy, marks[k][0], ms=6.5, mfc=marks[k][1], mec="white", mew=0.7, zorder=3)
+            if vals:
+                ax.plot([min(vals), max(vals)], [yy, yy], color=REF_LIGHT, lw=2.2, zorder=2, solid_capstyle="round")
+        ax.set_yticks(y, [n for _, n in conds])
+        ax.set_title(title, loc="left")
+        ax.set_xlabel("Success %")
+    handles = [plt.Line2D([], [], marker=m, ls="", ms=7, mfc=col, mec="white", label=lab) for m, col, lab in marks]
+    fig.legend(handles=handles, loc="upper right", ncol=3, frameon=False, bbox_to_anchor=(0.99, 0.995))
+    fig.suptitle("Does a condition's success rate hold when the task is played again?", x=0.01, ha="left", fontsize=12.5, fontweight="bold")
+    fig.tight_layout(rect=(0, 0, 1, 0.97))
+    fig.savefig(FIG / "fig5_repeats.png", dpi=180)
+    plt.close(fig)
+
+
 def main():
     FIG.mkdir(parents=True, exist_ok=True)
     cells = json.load(open(D / "cells.json"))
-    for f in (fig1, fig2, *((fig3, fig4) if (M / "summary.json").exists() else ())):
+    for f in (fig1, fig2, *((fig3, fig4) if (M / "summary.json").exists() else ()), fig5):
         f(cells)
         print("wrote", f.__name__)
 
