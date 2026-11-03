@@ -28,6 +28,7 @@ PLAYER = ["--player", "gemini-3.8-flash", "--monolingual"]
 PIVOT_PARENTS = {"sequence": ["main2x_sequence"], "mcq": ["main3_mcq"], "twentyq": ["main3_twentyq"],
                  "route": ["main2x_route", "main3_route_e16"], "image": ["main2xf_image"], "culture": ["main3_culture"]}
 QWEN_PARENTS = {"mcq": "main3_mcq", "twentyq": "main3_twentyq", "route": "main3_route_e16", "culture": "main3_culture"}
+NLLB_CONDS = ("nllb", "nllb-id")
 REPEAT_CONDS = ["sol", "flash-lite", "nllb", "google", "qwen", "nllb-id", "google-id", "ceiling", "prior"]
 
 
@@ -55,16 +56,23 @@ def parent_flags(run):
     return flags_from(json.load(open(OUTPUT_ROOT / run / "config.json")))
 
 
-def seed(name, parents):
-    """Copy the parents' caches once. seed.json keeps their spend, because `report` counts every record in the cache."""
+def seed(name, parents, drop=()):
+    """Copy the parents' caches once, without the games of the conditions in `drop`, which are played again: their records have the same
+    keys, and replay stops at the first request that differs. The openings stay, keyed by request. seed.json keeps the parents' spend and
+    how many lines were copied, because `report` counts every record in the cache."""
     d = OUTPUT_ROOT / name
     if (d / "cache.jsonl").exists():
         return
     d.mkdir(exist_ok=True)
+    lines = 0
     with open(d / "cache.jsonl", "w") as out:
         for run in parents:
-            out.write(open(OUTPUT_ROOT / run / "cache.jsonl").read())
-    json.dump({"parents": parents, "spend_usd": sum(json.load(open(OUTPUT_ROOT / r / "summary.json"))["spend_total_usd"] for r in parents)},
+            for line in open(OUTPUT_ROOT / run / "cache.jsonl"):
+                if not drop or not set(json.loads(line)["key"].split("|")) & set(drop):
+                    out.write(line)
+                    lines += 1
+    json.dump({"parents": parents, "lines": lines, "dropped": list(drop),
+               "spend_usd": sum(json.load(open(OUTPUT_ROOT / r / "summary.json"))["spend_total_usd"] for r in parents)},
               open(d / "seed.json", "w"), indent=1)
 
 
@@ -74,7 +82,8 @@ def play(name, args, workers):
         rc = subprocess.run(py + cmd + args).returncode
         if rc:
             return f"{name}: {cmd[0]} failed with exit code {rc}"
-    return f"{name}: done"
+    errors = sum(json.loads(line)["status"] != "done" for line in open(OUTPUT_ROOT / name / "records.jsonl"))
+    return f"{name}: done, {errors} errors"
 
 
 def pivots(task, workers):
@@ -98,7 +107,7 @@ def repeat(task, k, workers):
 
 def nllb(task, workers):
     name, parents = f"main3n_{task}", PIVOT_PARENTS[task]
-    seed(name, parents)
+    seed(name, parents, drop=NLLB_CONDS)
     flags = ["--n", "30", "--route-level", "easy"] if task == "route" else parent_flags(parents[0])
     return play(name, ["--run", name, "--tasks", task, *PLAYER, "--conds", "nllb", "nllb-id", "--pivots-all", *flags], workers)
 
@@ -106,7 +115,7 @@ def nllb(task, workers):
 def nllb_repeat(task, k, workers):
     """A repeat played before the fix: same cache, so its opening messages and the other conditions stay paired."""
     name, parent = f"main4n_{task}_r{k}", f"main4_{task}_r{k}"
-    seed(name, [parent])
+    seed(name, [parent], drop=NLLB_CONDS)
     flags = ["--n", "30", "--route-level", "easy"] if task == "route" else parent_flags(PIVOT_PARENTS[task][0])
     return play(name, ["--run", name, "--tasks", task, *PLAYER, "--conds", "nllb", "nllb-id", "--pivots-all", *flags], workers)
 

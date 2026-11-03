@@ -3,6 +3,7 @@
 No network, no GPU: every player is scripted and every channel is local.
 """
 
+import json
 import os
 import sys
 from pathlib import Path
@@ -696,3 +697,16 @@ def test_nllb_input_has_one_language_tag():
     ch._tok = Tok()
     assert ch.input_ids("x", "sun_Latn") == [256166, 7, 8, 9, 2]
     assert ch.name == "nllb:nllb-200-3.3B/v2" and "v2" in PivotChannel(ch, "id").name  # old caches cannot replay
+
+
+def test_seed_drops_replayed_games_and_keeps_openings(tmp_path, monkeypatch):
+    cells = _load_script("run_cells")
+    monkeypatch.setattr(cells, "OUTPUT_ROOT", tmp_path)
+    (tmp_path / "p").mkdir()
+    keys = ["m|first|abc", "m|sequence|nllb|su-jv|S01|arranger|0", "channel|nllb:x|sequence|nllb-id|su-jv|S01|0", "m|sequence|sol|su-jv|S01|arranger|0"]
+    (tmp_path / "p" / "cache.jsonl").write_text("".join(json.dumps({"key": k}) + "\n" for k in keys))
+    (tmp_path / "p" / "summary.json").write_text('{"spend_total_usd": 1}')
+    cells.seed("n", ["p"], drop=cells.NLLB_CONDS)
+    kept = [json.loads(line)["key"] for line in open(tmp_path / "n" / "cache.jsonl")]
+    assert kept == ["m|first|abc", "m|sequence|sol|su-jv|S01|arranger|0"]
+    assert json.load(open(tmp_path / "n" / "seed.json"))["lines"] == 2
