@@ -15,7 +15,8 @@ from scipy.stats import binomtest
 
 from mtcomm.paths import OUTPUT_ROOT
 from mtcomm.players import NOT_UNDERSTOOD, is_not_understood
-from mtcomm.poc_runs import ANALYSIS, available
+from mtcomm.poc_runs import ANALYSIS, available, runs_of
+from mixed_effects import sign_flip_p
 
 SYSTEMS = [("nllb", "NLLB"), ("google", "Google")]
 
@@ -75,6 +76,33 @@ def holm(ps):
     return out
 
 
+def pooled_section():
+    """The same contrasts over the run and its repeats. Plays of an item are correlated, so the test takes the item as the unit."""
+    rows = []
+    for title, run, _ in available():
+        games = [(load(r)[0]) for r in runs_of(run)]
+        for sys_, name in SYSTEMS:
+            by_item, cells = defaultdict(int), {"all": [0, 0, 0], "su↔jv": [0, 0, 0], "su↔ko": [0, 0, 0]}
+            for g in games:
+                for (cond, pair, item), v in g.items():
+                    w = g.get((f"{sys_}-id", pair, item))
+                    if cond != sys_ or w is None:
+                        continue
+                    by_item[item] += w - v
+                    for key in ("all", family(pair)):
+                        cells[key][0] += 1
+                        cells[key][1] += v
+                        cells[key][2] += w
+            rows.append((title, name, cells, sign_flip_p(list(by_item.values()))))
+    adj = holm([r[3] for r in rows])
+    fmt = lambda c: f"{100 * c[1] / c[0]:.0f} → {100 * c[2] / c[0]:.0f}"  # noqa: E731
+    md = ["\n## All runs together\n", "The first run and its repeats. Success % direct → via Indonesian. p: sign-flip permutation with the item as the unit; Holm over the 12 contrasts.\n",
+          "| task | system | pooled (n) | su↔jv | su↔ko | p | Holm p |", "|---|---|---|---|---|---|---|"]
+    for (title, name, cells, p), h in zip(rows, adj):
+        md.append(f"| {title} | {name} | {fmt(cells['all'])} ({cells['all'][0]}) | {fmt(cells['su↔jv'])} | {fmt(cells['su↔ko'])} | {p:.3f} | {h:.3f} |")
+    return md
+
+
 def main():
     rows, ps = [], []
     for title, run, task in available():
@@ -97,6 +125,7 @@ def main():
         _, ka, kb, kd, kp = contrast(games, sys_, lambda pair, item: family(pair) == "su↔ko")
         cn, _, _, cd, cp = contrast(games, sys_, lambda pair, item: family(pair) == "su↔ko" and (sys_, pair, item) not in bad)
         md.append(f"| {title} | {name} | {fmt(d, p)} ({n}) | {a} / {b} | {raw:.3f} | {h:.3f} | {fmt(jd, jp)} | {fmt(kd, kp)} | {ka} / {kb}, {mcnemar(ka, kb):.3f} | {fmt(cd, cp)} ({cn}) |")
+    md += pooled_section()
     ANALYSIS.mkdir(exist_ok=True)
     (ANALYSIS / "pivot.md").write_text("\n".join(md) + "\n")
     print("\n".join(md))

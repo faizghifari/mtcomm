@@ -1,7 +1,7 @@
 """Figures for the short PoC summary (docs/poc_summary_short.md).
 
-fig1_pooled.png          success per condition, pooled over the 4 pairs, with Wilson 95% intervals (one panel per task)
-fig2_per_pair.png        the same per language pair (rows = tasks, columns = pairs); dashed line = ceiling
+fig1_pooled.png          success per condition over the 4 pairs and all runs, with 95% bootstrap intervals over items (one panel per task)
+fig2_per_pair.png        the same per language pair over all runs (rows = tasks, columns = pairs); dashed line = ceiling
 fig3_metrics.png         MT metrics vs task success: per-game AUC (bootstrap interval) and per-condition Spearman
 fig4_sequence_scatter.png  condition success vs mean metric on sequence, the one task whose conditions can be ranked
 fig5_repeats.png         success per condition in each run of a task
@@ -25,7 +25,7 @@ import numpy as np
 from mtcomm.languages import scored_lang
 from mtcomm.paths import OUTPUT_ROOT
 from mtcomm.poc_runs import ANALYSIS as D
-from mtcomm.poc_runs import available
+from mtcomm.poc_runs import all_games, available
 
 M = OUTPUT_ROOT / "metrics4"
 FIG = OUTPUT_ROOT / "figures"
@@ -42,12 +42,16 @@ TRANSLATORS = {"sol", "flash-lite", "google", "nllb", "qwen"}
 TASKS = available()  # title, run, task
 
 
-def wilson(k, n, z=1.96):
-    p = k / n
-    d = 1 + z * z / n
-    c = (p + z * z / (2 * n)) / d
-    h = z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / d
-    return max(0, c - h), min(1, c + h)
+def item_interval(games, reps=2000, seed=0):
+    """Success %, with a 95% interval from resampling items: plays of one item are correlated, so a binomial interval would be too narrow."""
+    by_item = defaultdict(lambda: [0, 0])
+    for g in games:
+        by_item[g["item"]][0] += g["ok"]
+        by_item[g["item"]][1] += 1
+    a = np.array(list(by_item.values()), dtype=float)
+    i = np.random.default_rng(seed).integers(0, len(a), (reps, len(a)))
+    rates = a[i, 0].sum(1) / a[i, 1].sum(1)
+    return 100 * a[:, 0].sum() / a[:, 1].sum(), 100 * np.percentile(rates, 2.5), 100 * np.percentile(rates, 97.5)
 
 
 def colour(cond):
@@ -64,24 +68,27 @@ def style(ax, xlim=(0, 100)):
 
 
 def fig1(cells):
-    panels = [(t[0], {c: (v["k"], v["n"]) for c, v in cells["pooled"][t[1]].items()}) for t in TASKS]
+    panels = []
+    for title, run, _ in TASKS:
+        by_cond = defaultdict(list)
+        for g in all_games(run):
+            by_cond[g["cond"]].append(g)
+        panels.append((title, {c: item_interval(v) for c, v in by_cond.items()}))
     fig, axes = plt.subplots(2, 4, figsize=(15, 7.6), sharey=True)
     for ax in list(axes.flat)[len(panels):-1]:
         ax.axis("off")
     for ax, (title, data) in zip(axes.flat, panels):
         style(ax)
-        ce = data["ceiling"]
-        lo, hi = wilson(*ce)
-        ax.axvspan(100 * lo, 100 * hi, color=REF_LIGHT, alpha=0.18, lw=0)
-        ax.axvline(100 * ce[0] / ce[1], color=REF, lw=1, ls=(0, (4, 3)))
+        rate, lo, hi = data["ceiling"]
+        ax.axvspan(lo, hi, color=REF_LIGHT, alpha=0.18, lw=0)
+        ax.axvline(rate, color=REF, lw=1, ls=(0, (4, 3)))
         for i, (key, _) in enumerate(ROWS):
             if key not in data:
                 continue
-            k, n = data[key]
-            lo, hi = wilson(k, n)
+            rate, lo, hi = data[key]
             col = colour(key)
-            ax.plot([100 * lo, 100 * hi], [i, i], color=col, lw=1.6, solid_capstyle="round", alpha=0.55 if key != "ceiling" else 0.9)
-            ax.plot(100 * k / n, i, "o", ms=6.5, mfc=col, mec="white", mew=1.2, zorder=3)
+            ax.plot([lo, hi], [i, i], color=col, lw=1.6, solid_capstyle="round", alpha=0.55 if key != "ceiling" else 0.9)
+            ax.plot(rate, i, "o", ms=6.5, mfc=col, mec="white", mew=1.2, zorder=3)
         ax.set_title(title, loc="left", pad=6)
         ax.set_xticks([0, 25, 50, 75, 100])
         ax.set_xlabel("success %")
@@ -93,21 +100,25 @@ def fig1(cells):
     ax = axes.flat[-1]
     ax.axis("off")
     ax.text(0, 0.98, "How to read", fontweight="bold", va="top", transform=ax.transAxes)
-    ax.text(0, 0.90, "Dot: success rate pooled over the four pairs\n(n=120 per translator and pivot; culture 42).\nBar: Wilson 95% interval.\n"
-            "Dashed line and band: the ceiling and its interval,\nwhich is another n=30-per-language condition,\nnot an upper bound.\n\n"
+    ax.text(0, 0.90, "Dot: success rate over the four pairs and three runs\n(n=360 per translator and pivot; culture 126;\npassthrough first run only).\nBar: 95% interval, resampling items.\n"
+            "Dashed line and band: the ceiling and its interval,\nwhich is another condition, not an upper bound.\n\n"
             "Blue: translators.  Orange: NLLB and Google\nvia Indonesian.  Grey: references.\n\n"
             "Image prior is invalid\n(the player asks instead of guessing; chance is 17%).",
             va="top", fontsize=8.5, color=INK2, linespacing=1.5, transform=ax.transAxes)
-    fig.suptitle("Task success by condition, player Gemini 3.8 Flash, pooled over the four pairs", x=0.01, ha="left", fontsize=12, fontweight="bold")
+    fig.suptitle("Task success by condition, player Gemini 3.8 Flash, pooled over the four pairs and three runs", x=0.01, ha="left", fontsize=12, fontweight="bold")
     fig.tight_layout(rect=(0, 0, 1, 0.96))
     fig.savefig(FIG / "fig1_pooled.png", dpi=180)
     plt.close(fig)
 
 
 def fig2(cells):
-    rows_t = [(t[0], t[2], {k.split("|", 1)[1]: (round(v["success"] * v["n"]), v["n"]) for k, v in cells[t[1]].items()
-                            if v["success"] is not None}) for t in TASKS]
-    rows_t = [r for r in rows_t if any(k.split("|")[1] == "sol" for k in r[2])]  # a control with no translators has no pairs
+    rows_t = []
+    for title, run, task in TASKS:
+        data = defaultdict(lambda: [0, 0])
+        for g in all_games(run):
+            data[f"{g['key']}|{g['cond']}"][0] += g["ok"]
+            data[f"{g['key']}|{g['cond']}"][1] += 1
+        rows_t.append((title, task, data))
     conds = [r for r in ROWS if r[0] not in ("ceiling", "prior")]
     fig, axes = plt.subplots(len(rows_t), 4, figsize=(13, 2.75 * len(rows_t)), sharex=True, sharey=True)
     for ri, (title, task, data) in enumerate(rows_t):
@@ -139,7 +150,7 @@ def fig2(cells):
         ax.set_xlabel("success %")
     fig.suptitle("Task success per language pair. Dashed line = ceiling of the scored language.",
                  x=0.01, ha="left", fontsize=11, fontweight="bold", y=0.998)
-    fig.text(0.01, 0.976, "n=30 games per dot (95% interval about ±17 points); culture 11–20 (up to ±28). a → b: a sends, b is scored. a asks b: a is scored, b holds the information. Orange: NLLB and Google via Indonesian.",
+    fig.text(0.01, 0.976, "Three runs: n=90 games per dot (95% interval about ±10 points); culture 33–60 (up to ±17); passthrough first run only. a → b: a sends, b is scored. a asks b: a is scored, b holds the information. Orange: NLLB and Google via Indonesian.",
              fontsize=8.5, color=INK2, ha="left")
     fig.tight_layout(rect=(0, 0, 1, 0.968), h_pad=2.2)
     fig.savefig(FIG / "fig2_per_pair.png", dpi=160)

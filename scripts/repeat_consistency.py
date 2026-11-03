@@ -85,6 +85,14 @@ def se_design(item, resid, n_items, repeats):
     return 100 * math.sqrt(item / n_items + resid / (n_items * repeats))
 
 
+def item_clustered_p(games, a, b):
+    """Two-sided p for a contrast with the item as the unit: paired differences are summed per item before the test.
+
+    An item's plays across pairs and runs share its difficulty, and the ceiling game is shared between pairs, so they are not independent."""
+    wide = games.pivot_table(index=["rep", "pair", "item"], columns="cond", values="ok", aggfunc="first")[[a, b]].dropna()
+    return mixed_effects.sign_flip_p((wide[a] - wide[b]).groupby(level="item").sum())
+
+
 def section(task):
     runs = [(f"r0", f"poc3_{task}")]
     k = 1
@@ -141,10 +149,14 @@ def section(task):
     shown = [key for key in per_run[names[0]] if all(key in per_run[n] for n in names)]
     for key in shown:
         md.append(f"| {NAMES[key[0]]} vs {NAMES[key[1]]} | " + " | ".join(f"{per_run[n][key]['diff']:+.0f}{'*' if per_run[n][key]['holm'] < 0.05 else ''}" for n in names) + " |")
-    pool = mixed_effects.contrasts(mixed_effects.load([r for _, r in runs]))
-    md += [f"\nAll {len(runs)} runs together (paired within pair × item × run):\n", "| contrast | n | diff | a wins / b wins | Holm p |", "|---|---|---|---|---|"]
+    games = mixed_effects.load([r for _, r in runs])
+    pool = mixed_effects.contrasts(games)
+    clustered = dict(zip([(r["a"], r["b"]) for r in pool], mixed_effects.holm([item_clustered_p(games, r["a"], r["b"]) for r in pool])))
+    md += [f"\nAll {len(runs)} runs together. McNemar counts each play as independent, so its p-values are optimistic: plays of one item are correlated. "
+           "The last column is the same contrast with the item as the unit (sign-flip permutation over items, Holm):\n",
+           "| contrast | n | diff | a wins / b wins | Holm p, McNemar | Holm p, by item |", "|---|---|---|---|---|---|"]
     for r in pool:
-        md.append(f"| {NAMES[r['a']]} vs {NAMES[r['b']]} | {r['n']} | {r['diff']:+.1f} | {r['x']} / {r['y']} | {r['holm']:.3f} |")
+        md.append(f"| {NAMES[r['a']]} vs {NAMES[r['b']]} | {r['n']} | {r['diff']:+.1f} | {r['x']} / {r['y']} | {r['holm']:.3f} | {clustered[(r['a'], r['b'])]:.3f} |")
 
     # translator order
     present = [c for c in TRANSLATORS if c in conds]

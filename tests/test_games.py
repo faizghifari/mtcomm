@@ -643,6 +643,27 @@ def test_repeat_consistency_statistics():
     assert rc.se_design(0.1, 0.0, 100, 3) == rc.se_design(0.1, 0.0, 100, 1)
 
 
+def test_item_clustered_test_treats_the_item_as_the_unit():
+    import pandas as pd
+
+    me = _load_script("mixed_effects")
+    assert me.sign_flip_p([1] * 20) < 0.001
+    assert me.sign_flip_p([1, -1] * 10) == 1
+    rc = _load_script("repeat_consistency")
+
+    def games(wins):
+        """Three runs of a on one item winning `wins` times over b, the other items tied."""
+        rows = []
+        for rep in range(3):
+            for item in range(10):
+                for cond, ok in (("a", int(item == 0 and rep < wins)), ("b", 0)):
+                    rows.append({"rep": rep, "pair": "x", "item": str(item), "cond": cond, "ok": ok})
+        return pd.DataFrame(rows)
+
+    # McNemar would count the three wins as three independent discordant games; one item can never reach significance
+    assert rc.item_clustered_p(games(3), "a", "b") == 1
+
+
 def test_nllb_server_round_trip():
     import threading
 

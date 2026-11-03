@@ -55,6 +55,13 @@ def mcnemar(b, c):
     return 1.0 if not n else min(1.0, 2 * sum(math.comb(n, i) for i in range(min(b, c) + 1)) / 2 ** n)
 
 
+def sign_flip_p(d, flips=200_000, seed=0):
+    """Two-sided p that per-item differences `d` are symmetric around 0, by flipping their signs at random."""
+    d = np.asarray(d, dtype=float)
+    signs = np.random.default_rng(seed).choice([-1.0, 1.0], size=(flips, len(d)))
+    return float((1 + (np.abs(signs @ d) >= abs(d.sum()) - 1e-9).sum()) / (1 + flips))
+
+
 def holm(ps):
     order = np.argsort(ps)
     adj, top = [0.0] * len(ps), 0.0
