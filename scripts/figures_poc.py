@@ -3,7 +3,7 @@
 fig1_pooled.png          success per condition over the 4 pairs and all runs, with 95% bootstrap intervals over items (one panel per task)
 fig2_per_pair.png        the same per language pair over all runs (rows = tasks, columns = pairs); dashed line = ceiling
 fig3_metrics.png         MT metrics vs task success: per-game AUC (bootstrap interval) and per-condition Spearman
-fig4_sequence_scatter.png  condition success vs mean metric on sequence, the one task whose conditions can be ranked
+fig4_sequence_ranks.png  translators ranked by success and by each metric on sequence, the one task whose translator order holds in every run
 fig5_repeats.png         success per condition in each run of a task
 
 Reads cells.json in the analysis directory (run scripts/analyze_main2.py first) and outputs/mtcomm/metrics4/*. Writes outputs/mtcomm/figures/*.png. Needs matplotlib, numpy and scipy.
@@ -150,9 +150,9 @@ def fig2(cells):
         ax.set_xlabel("success %")
     fig.suptitle("Task success per language pair. Dashed line = ceiling of the scored language.",
                  x=0.01, ha="left", fontsize=11, fontweight="bold", y=0.998)
-    fig.text(0.01, 0.976, "Three runs: n=90 games per dot (95% interval about ±10 points); culture 33–60 (up to ±17); passthrough first run only. a → b: a sends, b is scored. a asks b: a is scored, b holds the information. Orange: NLLB and Google via Indonesian.",
-             fontsize=8.5, color=INK2, ha="left")
-    fig.tight_layout(rect=(0, 0, 1, 0.968), h_pad=2.2)
+    fig.text(0.01, 0.985, "Three runs: n=90 games per dot (95% interval about ±10 points); culture 33–60 (up to ±17); passthrough first run only.\na → b: a sends, b is scored. a asks b: a is scored, b holds the information. Orange: NLLB and Google via Indonesian.",
+             fontsize=8.5, color=INK2, ha="left", va="top")
+    fig.tight_layout(rect=(0, 0, 1, 0.962), h_pad=2.2)
     fig.savefig(FIG / "fig2_per_pair.png", dpi=160)
     plt.close(fig)
 
@@ -221,7 +221,7 @@ def fig3(cells):
     axes[0].set_ylim(len(TASK_ORDER) - 0.5, -0.5)
     fig.suptitle("CometKiwi and XCOMET-XL score successful and failed games alike; the LLM judge separates them on some tasks", x=0.01, ha="left", fontsize=12.5, fontweight="bold")
     fig.text(0.01, 0.9, "Open dot: average score in failed games.  Filled dot: average score in successful games.  If a metric predicted success, the filled dot "
-             "would sit clearly to the right.\nNumber: the gap (successful minus failed). Scores run 0–1, higher = better; about 700–850 games per task, culture 250 (GEMBA: fewer, it scored a sample of messages).",
+             "would sit clearly to the right.\nNumber: the gap (successful minus failed). Scores run 0–1, higher = better; first run only: 840 games per task, culture 294 (GEMBA: fewer, it scored a sample of messages).",
              fontsize=8.8, color=INK2, va="top", linespacing=1.5)
     fig.tight_layout(rect=(0, 0, 1, 0.84))
     fig.savefig(FIG / "fig3_metric_gap.png", dpi=180)
@@ -264,9 +264,9 @@ def fig4(cells):
         ax.text(1, 0.0, f"ranked by\n{name}", ha="center", va="bottom", fontsize=9, color=INK2, fontweight="bold")
         ax.text(0.5, 5.75, "best at top", ha="center", va="top", fontsize=8, color=INK2) if m == "xcomet" else None
     fig.suptitle("Sequence ordering: does the metric order the translators like task success does?", x=0.01, ha="left", fontsize=12.5, fontweight="bold")
-    fig.text(0.01, 0.9, "Rank 1 is best. Left of each panel: translators by pooled success rate. Right: the same translators by the metric's mean score. "
-             "Parallel lines mean the metric agrees.\nGEMBA (an LLM judge) keeps the top three in order and swaps the bottom two; CometKiwi and XCOMET-XL put Qwen, "
-             "the translator with the lowest success, in their top two.", fontsize=8.8, color=INK2, va="top", linespacing=1.5)
+    fig.text(0.01, 0.9, "First run, the games the metrics scored. Rank 1 is best. Left of each panel: translators by success rate. Right: the same translators by the metric's mean score. "
+             "Parallel lines mean the metric agrees.\nGEMBA (an LLM judge) keeps the top three in order and swaps the bottom two; CometKiwi and XCOMET-XL rank Qwen, "
+             "the translator with the lowest success, first.", fontsize=8.8, color=INK2, va="top", linespacing=1.5)
     fig.tight_layout(rect=(0, 0, 1, 0.84))
     fig.savefig(FIG / "fig4_sequence_ranks.png", dpi=180)
     plt.close(fig)
